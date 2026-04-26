@@ -263,6 +263,82 @@ ipcMain.handle('hermes:getCurrentProvider', async () => {
   }
 });
 
+// --- Hermes Version / Update / Rollback ---
+ipcMain.handle('hermes:getVersion', async () => {
+  const { execSync } = require('child_process');
+  const fs = require('fs');
+  const hermesDir = path.join(__dirname, '..', 'hermes-agent');
+  try {
+    const ver = execSync(`"${process.execPath}" -c "import sys; sys.path.insert(0, r'${hermesDir}'); from hermes_cli.main import __version__; print(__version__)"`, {
+      encoding: 'utf8', timeout: 10000,
+    }).trim();
+    // Also get git describe
+    let gitVer = '';
+    try {
+      gitVer = execSync('git describe --tags --always', {
+        encoding: 'utf8', timeout: 5000, cwd: hermesDir,
+      }).trim();
+    } catch {}
+    return { version: ver, git: gitVer };
+  } catch (err) {
+    return { version: 'unknown', git: '', error: err.message };
+  }
+});
+
+ipcMain.handle('hermes:getTags', async () => {
+  const { execSync } = require('child_process');
+  const hermesDir = path.join(__dirname, '..', 'hermes-agent');
+  try {
+    const tags = execSync('git tag -l "v*" --sort=-v:refname', {
+      encoding: 'utf8', timeout: 5000, cwd: hermesDir,
+    }).trim().split('\n').filter(Boolean);
+    return { tags };
+  } catch {
+    return { tags: [] };
+  }
+});
+
+ipcMain.handle('hermes:update', async () => {
+  const { execSync } = require('child_process');
+  const hermesDir = path.join(__dirname, '..', 'hermes-agent');
+  const python = 'C:\\Users\\Administrator\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe';
+  try {
+    // Kill running process first
+    if (ptyProcess) { ptyProcess.kill(); ptyProcess = null; }
+
+    execSync('git pull origin main', {
+      encoding: 'utf8', timeout: 60000, cwd: hermesDir,
+    });
+    execSync(`"${python}" -m pip install -e . --quiet`, {
+      encoding: 'utf8', timeout: 120000, cwd: hermesDir,
+    });
+
+    return { status: 'updated' };
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  }
+});
+
+ipcMain.handle('hermes:rollback', async (event, tag) => {
+  const { execSync } = require('child_process');
+  const hermesDir = path.join(__dirname, '..', 'hermes-agent');
+  const python = 'C:\\Users\\Administrator\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe';
+  try {
+    if (ptyProcess) { ptyProcess.kill(); ptyProcess = null; }
+
+    execSync(`git checkout ${tag}`, {
+      encoding: 'utf8', timeout: 30000, cwd: hermesDir,
+    });
+    execSync(`"${python}" -m pip install -e . --quiet`, {
+      encoding: 'utf8', timeout: 120000, cwd: hermesDir,
+    });
+
+    return { status: 'rolled_back', tag };
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  }
+});
+
 // --- App Lifecycle ---
 
 app.whenReady().then(createWindow);
