@@ -64,6 +64,16 @@
             <option value="default">Default</option>
           </select>
         </div>
+        <hr class="modal-divider"/>
+        <div class="form-group">
+          <label>Hermes Version</label>
+          <div class="version-row">
+            <span id="cfg-version" class="version-text">checking...</span>
+            <button id="btn-update" class="btn btn-secondary btn-small">Update</button>
+            <button id="btn-rollback" class="btn btn-secondary btn-small">Rollback</button>
+          </div>
+          <div class="form-hint">Update: <code>git pull && pip install -e .</code> · Rollback: <code>git checkout v2026.4.23</code></div>
+        </div>
         <div class="form-hint">
           Changes update <code>~/.hermes/config.yaml</code> and <code>~/.hermes/.env</code>, then restart Hermes.
         </div>
