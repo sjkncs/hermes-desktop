@@ -112,6 +112,28 @@ html, body {
   background: var(--accent-glow);
 }
 
+.model-select {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 2px 4px;
+  cursor: pointer;
+  outline: none;
+  max-width: 100px;
+}
+
+.model-select:hover {
+  border-color: var(--accent);
+}
+
+.model-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
 #status-indicator {
   width: 8px;
   height: 8px;
