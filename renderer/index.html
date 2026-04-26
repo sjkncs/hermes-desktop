@@ -16,6 +16,7 @@
     </div>
     <div id="titlebar-right">
       <button id="settings-btn" class="btn-icon" title="API Settings">&#9881;</button>
+      <span id="update-badge" class="update-badge hidden" title="Update available">&#x2191;</span>
       <button id="theme-btn" class="btn-icon" title="Toggle theme">&#9788;</button>
       <span id="status-indicator" class="status-offline"></span>
       <span id="status-text">Offline</span>
@@ -63,6 +64,23 @@
             <option value="super-agent">Super Agent</option>
             <option value="default">Default</option>
           </select>
+        </div>
+        <hr class="modal-divider"/>
+        <div class="form-group">
+          <label for="cfg-workspace">Workspace Directory</label>
+          <div class="input-with-toggle">
+            <input type="text" id="cfg-workspace" placeholder="e.g. C:\Users\Admin\Projects" />
+            <button id="btn-browse-ws" class="btn-icon btn-small" title="Browse">&#128193;</button>
+          </div>
+          <div class="form-hint">Hermes will read/write files in this directory. Created automatically if missing.</div>
+        </div>
+        <div class="form-group">
+          <label for="cfg-resume">Resume Session</label>
+          <div class="input-with-toggle">
+            <input type="text" id="cfg-resume" placeholder="Session ID or name (optional)" />
+            <button id="btn-last-session" class="btn btn-secondary btn-small" title="Last session">Last</button>
+          </div>
+          <div class="form-hint">Resume a previous session by ID (--resume) or name (--continue). Leave empty for new session.</div>
         </div>
         <hr class="modal-divider"/>
         <div class="form-group">
