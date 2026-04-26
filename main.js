@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const os = require('os');
 const pty = require('node-pty');
@@ -7,6 +7,8 @@ let mainWindow;
 let ptyProcess = null;
 const isDev = !app.isPackaged;
 let hermesAgent = 'super-agent';
+let hermesWorkspace = ''; // configurable workspace directory
+let hermesResume = '';   // session ID or name to resume
 const PYTHON = 'C:\\Users\\Administrator\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe';
 
 function safeKillPty() {
@@ -17,17 +19,27 @@ function safeKillPty() {
 }
 
 function getHermesCommand() {
-  if (isDev) {
-    return {
-      cmd: PYTHON,
-      args: ['-m', 'hermes_cli.main', 'chat', '-s', hermesAgent],
-      cwd: path.join(__dirname, '..', 'hermes-agent'),
-    };
+  const args = ['-m', 'hermes_cli.main', 'chat', '-s', hermesAgent];
+  // Add resume flag if configured
+  if (hermesResume) {
+    // If it looks like a UUID, use --resume; otherwise --continue
+    if (hermesResume.length >= 8 && hermesResume.includes('-')) {
+      args.push('--resume', hermesResume);
+    } else {
+      args.push('--continue', hermesResume);
+    }
   }
+  // Determine cwd: use workspace if set, otherwise default
+  let cwd;
+  if (isDev) {
+    cwd = hermesWorkspace || path.join(__dirname, '..', 'hermes-agent');
+    return { cmd: PYTHON, args, cwd };
+  }
+  cwd = hermesWorkspace || os.homedir();
   return {
     cmd: path.join(process.resourcesPath, 'hermes', 'Hermes.exe'),
     args: ['chat', '-s', hermesAgent],
-    cwd: os.homedir(),
+    cwd,
   };
 }
 
@@ -142,6 +154,60 @@ ipcMain.handle('app:getVersion', async () => {
   return app.getVersion();
 });
 
+// --- Folder Browse ---
+ipcMain.handle('dialog:browseFolder', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory', 'createDirectory'],
+    title: 'Select Workspace Directory',
+  });
+  if (result.canceled) return '';
+  return result.filePaths[0];
+});
+
+// --- Auto Check for Updates ---
+ipcMain.handle('hermes:checkForUpdates', async () => {
+  const { execSync } = require('child_process');
+  try {
+    const localVer = execSync(`"${PYTHON}" -m hermes_cli.main --version`, {
+      encoding: 'utf8', timeout: 10000, cwd: HERMES_DIR_SRC,
+    }).trim().split('\n')[0];
+
+    const latestTag = execSync(
+      `gh api /repos/${HERMES_REPO}/releases/latest --jq ".tag_name"`,
+      { encoding: 'utf8', timeout: 15000 }
+    ).trim();
+
+    if (!latestTag) return { hasUpdate: false, current: localVer, latest: '' };
+
+    let currentTag = '';
+    try {
+      currentTag = execSync('git describe --tags --abbrev=0', {
+        encoding: 'utf8', timeout: 5000, cwd: HERMES_DIR_SRC,
+      }).trim();
+    } catch {}
+
+    return { hasUpdate: latestTag !== currentTag, current: localVer, latest: latestTag, currentTag };
+  } catch {
+    return { hasUpdate: false, current: '', latest: '' };
+  }
+});
+
+// --- Get Last Session ID ---
+ipcMain.handle('hermes:getLastSession', async () => {
+  const fs = require('fs');
+  try {
+    const sessionsDir = path.join(HERMES_DIR, 'sessions');
+    if (!fs.existsSync(sessionsDir)) return '';
+    const files = fs.readdirSync(sessionsDir)
+      .filter(f => f.endsWith('.json'))
+      .map(f => ({ name: f.replace('.json', ''), mtime: fs.statSync(path.join(sessionsDir, f)).mtime }))
+      .sort((a, b) => b.mtime - a.mtime);
+    return files.length ? files[0].name : '';
+  } catch {
+    return '';
+  }
+});
+
 ipcMain.handle('hermes:checkExe', async () => {
   const hermes = getHermesCommand();
   const fs = require('fs');
@@ -216,6 +282,18 @@ ipcMain.handle('hermes:saveConfig', async (event, cfg) => {
       hermesAgent = cfg.agent;
     }
 
+    // --- Update workspace directory ---
+    if (cfg.workspace) {
+      hermesWorkspace = cfg.workspace;
+      // Create directory if it doesn't exist
+      try { fs.mkdirSync(cfg.workspace, { recursive: true }); } catch {}
+    } else {
+      hermesWorkspace = '';
+    }
+
+    // --- Update resume session ---
+    hermesResume = cfg.resume || '';
+
     // Kill current process so it restarts with new config
     safeKillPty();
 
@@ -261,9 +339,11 @@ ipcMain.handle('hermes:getCurrentProvider', async () => {
       base_url: baseUrl,
       api_key: apiKeyMasked,
       agent: hermesAgent,
+      workspace: hermesWorkspace,
+      resume: hermesResume,
     };
   } catch {
-    return { model: '', provider: 'custom', base_url: '', api_key: '', agent: hermesAgent };
+    return { model: '', provider: 'custom', base_url: '', api_key: '', agent: hermesAgent, workspace: '', resume: '' };
   }
 });
 
