@@ -294,6 +294,22 @@ ipcMain.handle('hermes:saveConfig', async (event, cfg) => {
     // --- Update resume session ---
     hermesResume = cfg.resume || '';
 
+    // --- Update agent parameters (sliders) ---
+    if (cfg.max_turns) {
+      yaml = yaml.replace(/(agent:\s*\n\s*)max_turns:\s*\d+/, `$1max_turns: ${cfg.max_turns}`);
+    }
+    if (cfg.gateway_timeout) {
+      yaml = yaml.replace(/gateway_timeout:\s*\d+/, `gateway_timeout: ${cfg.gateway_timeout}`);
+    }
+    if (cfg.api_max_retries !== undefined) {
+      yaml = yaml.replace(/api_max_retries:\s*\d+/, `api_max_retries: ${cfg.api_max_retries}`);
+    }
+    if (cfg.term_timeout) {
+      yaml = yaml.replace(/(terminal:\s*\n(?:\s.*\n)*?\s*)timeout:\s*\d+/, `$1timeout: ${cfg.term_timeout}`);
+    }
+    // Re-write yaml with updated slider values
+    fs.writeFileSync(CONFIG_PATH, yaml, 'utf8');
+
     // Kill current process so it restarts with new config
     safeKillPty();
 
@@ -341,9 +357,13 @@ ipcMain.handle('hermes:getCurrentProvider', async () => {
       agent: hermesAgent,
       workspace: hermesWorkspace,
       resume: hermesResume,
+      max_turns: parseInt(yaml.match(/max_turns:\s*(\d+)/)?.[1]) || 90,
+      gateway_timeout: parseInt(yaml.match(/gateway_timeout:\s*(\d+)/)?.[1]) || 1800,
+      api_max_retries: parseInt(yaml.match(/api_max_retries:\s*(\d+)/)?.[1]) ?? 3,
+      term_timeout: parseInt(yaml.match(/\s+timeout:\s*(\d+)/)?.[1]) || 180,
     };
   } catch {
-    return { model: '', provider: 'custom', base_url: '', api_key: '', agent: hermesAgent, workspace: '', resume: '' };
+    return { model: '', provider: 'custom', base_url: '', api_key: '', agent: hermesAgent, workspace: '', resume: '', max_turns: 90, gateway_timeout: 1800, api_max_retries: 3, term_timeout: 180 };
   }
 });
 
