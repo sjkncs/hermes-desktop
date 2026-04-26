@@ -121,6 +121,11 @@ const cfgVersion = document.getElementById('cfg-version');
 const btnUpdate = document.getElementById('btn-update');
 const btnRollback = document.getElementById('btn-rollback');
 const updateStatus = document.getElementById('update-status');
+const cfgWorkspace = document.getElementById('cfg-workspace');
+const btnBrowseWs = document.getElementById('btn-browse-ws');
+const cfgResume = document.getElementById('cfg-resume');
+const btnLastSession = document.getElementById('btn-last-session');
+const updateBadge = document.getElementById('update-badge');
 
 function setUpdateStatus(state, text) {
   updateStatus.textContent = text;
@@ -175,6 +180,24 @@ cfgProvider.addEventListener('change', () => {
   }
 });
 
+// Browse workspace folder
+btnBrowseWs.addEventListener('click', async () => {
+  const folder = await ipcRenderer.invoke('dialog:browseFolder');
+  if (folder) cfgWorkspace.value = folder;
+});
+
+// Get last session ID
+btnLastSession.addEventListener('click', async () => {
+  const sessionId = await ipcRenderer.invoke('hermes:getLastSession');
+  if (sessionId) cfgResume.value = sessionId;
+  else if (terminal) terminal.writeln('\r\nNo previous sessions found');
+});
+
+// Update badge click opens settings
+updateBadge.addEventListener('click', () => {
+  settingsModal.classList.remove('hidden');
+});
+
 function openSettings() {
   settingsModal.classList.remove('hidden');
   // Load current config
@@ -186,6 +209,8 @@ function openSettings() {
     cfgApikey.value = '';
     cfgApikey.placeholder = current.api_key ? 'Current: ' + current.api_key + ' (leave empty to keep)' : 'sk-...';
     cfgAgent.value = current.agent || 'super-agent';
+    cfgWorkspace.value = current.workspace || '';
+    cfgResume.value = current.resume || '';
   }).catch(() => {});
   // Load version info
   ipcRenderer.invoke('hermes:getVersion').then(ver => {
@@ -296,6 +321,8 @@ settingsSave.addEventListener('click', async () => {
     base_url: cfgBaseurl.value.trim(),
     api_key: cfgApikey.value.trim(),
     agent: cfgAgent.value,
+    workspace: cfgWorkspace.value.trim(),
+    resume: cfgResume.value.trim(),
   };
 
   if (!config.model) {
@@ -386,6 +413,10 @@ async function init() {
     }
   } catch {}
 
+  // Auto-check for updates (non-blocking)
+  checkForUpdates();
+  setInterval(checkForUpdates, 30 * 60 * 1000); // recheck every 30 min
+
   const check = await ipcRenderer.invoke('hermes:checkExe');
   if (check.exists) {
     terminal.writeln('Hermes.exe found, starting...');
@@ -395,6 +426,18 @@ async function init() {
     terminal.writeln('Build it first: pyinstaller hermes.spec');
     setStatus('offline', 'Exe not found');
   }
+}
+
+async function checkForUpdates() {
+  try {
+    const result = await ipcRenderer.invoke('hermes:checkForUpdates');
+    if (result.hasUpdate) {
+      updateBadge.classList.remove('hidden');
+      updateBadge.title = `Update available: ${result.latest} (current: ${result.currentTag || result.current})`;
+    } else {
+      updateBadge.classList.add('hidden');
+    }
+  } catch {}
 }
 
 init();
