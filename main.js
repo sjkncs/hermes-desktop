@@ -6,18 +6,19 @@ const pty = require('node-pty');
 let mainWindow;
 let ptyProcess = null;
 const isDev = !app.isPackaged;
+let hermesAgent = 'super-agent';
 
 function getHermesCommand() {
   if (isDev) {
     return {
       cmd: 'C:\\Users\\Administrator\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe',
-      args: ['-m', 'hermes_cli.main', 'chat', '-s', global.__hermesAgent || 'super-agent'],
+      args: ['-m', 'hermes_cli.main', 'chat', '-s', hermesAgent],
       cwd: path.join(__dirname, '..', 'hermes-agent'),
     };
   }
   return {
     cmd: path.join(process.resourcesPath, 'hermes', 'Hermes.exe'),
-    args: ['chat', '-s', 'super-agent'],
+    args: ['chat', '-s', hermesAgent],
     cwd: os.homedir(),
   };
 }
@@ -137,12 +138,10 @@ ipcMain.handle('app:getVersion', async () => {
 ipcMain.handle('hermes:checkExe', async () => {
   const hermes = getHermesCommand();
   const fs = require('fs');
-  if (hermes.cmd === 'python') {
-    return { exists: true, path: hermes.cmd + ' ' + hermes.args.join(' ') };
-  }
+  // In dev mode, check if python executable exists
   try {
     await fs.promises.access(hermes.cmd, fs.constants.R_OK);
-    return { exists: true, path: hermes.cmd };
+    return { exists: true, path: hermes.cmd + ' ' + hermes.args.join(' ') };
   } catch {
     return { exists: false, path: hermes.cmd };
   }
@@ -159,28 +158,33 @@ ipcMain.handle('hermes:saveConfig', async (event, cfg) => {
     // --- Update config.yaml ---
     let yaml = fs.readFileSync(CONFIG_PATH, 'utf8');
 
-    // Update model section: default, provider, base_url
-    yaml = yaml.replace(
-      /model:\s*\n(\s*default:.*\n)(\s*provider:.*\n)(\s*base_url:.*\n)?/,
-      `model:\n  default: ${cfg.model}\n  provider: ${cfg.provider}\n${cfg.base_url ? '  base_url: ' + cfg.base_url + '\n' : ''}`
-    );
+    // Replace the model block (model: + default + provider + optional base_url)
+    // Match the exact model: section at the top of the file
+    const modelBlockRegex = /model:\s*\n(\s*default:.*\n)(\s*provider:.*\n)(\s*base_url:.*\n)?/;
+    const newBaseUrl = cfg.base_url ? `  base_url: ${cfg.base_url}\n` : '';
+    const replacement = `model:\n  default: ${cfg.model}\n  provider: ${cfg.provider}\n${newBaseUrl}`;
 
-    // If base_url line doesn't exist yet (first replacement didn't match), add it
-    if (cfg.base_url && !yaml.match(/\s*base_url:/)) {
-      yaml = yaml.replace(
-        /model:\s*\n(\s*default:.*\n)(\s*provider:.*\n)/,
-        `$1$2  base_url: ${cfg.base_url}\n`
-      );
+    if (modelBlockRegex.test(yaml)) {
+      yaml = yaml.replace(modelBlockRegex, replacement);
+    } else {
+      // Fallback: just replace default and provider lines after model:
+      yaml = yaml.replace(/(model:\s*\n\s*)default:.*\n/, `$1default: ${cfg.model}\n`);
+      yaml = yaml.replace(/(model:\s*\n\s*default:.*\n\s*)provider:.*\n/, `$1provider: ${cfg.provider}\n`);
+      if (cfg.base_url && !yaml.includes('base_url:')) {
+        yaml = yaml.replace(
+          /(model:\s*\n\s*default:.*\n\s*provider:.*\n)/,
+          `$1  base_url: ${cfg.base_url}\n`
+        );
+      }
     }
 
     fs.writeFileSync(CONFIG_PATH, yaml, 'utf8');
 
-    // --- Update .env with API key ---
-    if (cfg.api_key) {
+    // --- Update .env with API key (only if user provided a new one) ---
+    if (cfg.api_key && cfg.api_key !== '') {
       let envContent = '';
       try { envContent = fs.readFileSync(ENV_PATH, 'utf8'); } catch {}
 
-      // Determine env var name based on provider
       const keyEnvMap = {
         custom: 'CUSTOM_API_KEY',
         openai: 'OPENAI_API_KEY',
@@ -190,7 +194,6 @@ ipcMain.handle('hermes:saveConfig', async (event, cfg) => {
       };
       const keyName = keyEnvMap[cfg.provider] || 'CUSTOM_API_KEY';
 
-      // Replace or append the key
       const keyRegex = new RegExp(`^${keyName}=.*$`, 'm');
       if (keyRegex.test(envContent)) {
         envContent = envContent.replace(keyRegex, `${keyName}=${cfg.api_key}`);
@@ -201,10 +204,9 @@ ipcMain.handle('hermes:saveConfig', async (event, cfg) => {
       fs.writeFileSync(ENV_PATH, envContent, 'utf8');
     }
 
-    // --- Update agent skill in Hermes args ---
+    // --- Update agent skill ---
     if (cfg.agent) {
-      // We'll use this in getHermesCommand dynamically
-      global.__hermesAgent = cfg.agent;
+      hermesAgent = cfg.agent;
     }
 
     // Kill current process so it restarts with new config
@@ -223,12 +225,14 @@ ipcMain.handle('hermes:getCurrentProvider', async () => {
   const fs = require('fs');
   try {
     const yaml = fs.readFileSync(CONFIG_PATH, 'utf8');
-    const modelMatch = yaml.match(/default:\s*(.+)/);
-    const providerMatch = yaml.match(/provider:\s*(.+)/);
-    const baseUrlMatch = yaml.match(/base_url:\s*(.+)/);
+    // Only match model section (first occurrence after 'model:')
+    const modelSection = yaml.match(/model:\s*\n\s*default:\s*(.+)\n\s*provider:\s*(.+)\n(?:\s*base_url:\s*(.+)\n)?/);
+    const model = modelSection ? modelSection[1].trim() : '';
+    const provider = modelSection ? modelSection[2].trim() : 'custom';
+    const baseUrl = modelSection && modelSection[3] ? modelSection[3].trim() : '';
 
-    // Try to read API key from .env
-    let apiKey = '';
+    // Try to read API key from .env (return masked version for security)
+    let apiKeyMasked = '';
     try {
       const envContent = fs.readFileSync(ENV_PATH, 'utf8');
       const keyEnvMap = {
@@ -238,21 +242,24 @@ ipcMain.handle('hermes:getCurrentProvider', async () => {
         openrouter: 'OPENROUTER_API_KEY',
         nous: 'NOUS_API_KEY',
       };
-      const provider = providerMatch ? providerMatch[1].trim() : 'custom';
       const keyName = keyEnvMap[provider] || 'CUSTOM_API_KEY';
       const keyMatch = envContent.match(new RegExp(`^${keyName}=(.+)$`, 'm'));
-      if (keyMatch) apiKey = keyMatch[1].trim();
+      if (keyMatch) {
+        const full = keyMatch[1].trim();
+        // Mask: show first 4 and last 4 chars, rest dots
+        apiKeyMasked = full.length > 8 ? full.slice(0, 4) + '...' + full.slice(-4) : full;
+      }
     } catch {}
 
     return {
-      model: modelMatch ? modelMatch[1].trim() : '',
-      provider: providerMatch ? providerMatch[1].trim() : 'custom',
-      base_url: baseUrlMatch ? baseUrlMatch[1].trim() : '',
-      api_key: apiKey,
-      agent: global.__hermesAgent || 'super-agent',
+      model,
+      provider,
+      base_url: baseUrl,
+      api_key: apiKeyMasked,
+      agent: hermesAgent,
     };
   } catch {
-    return { model: '', provider: 'custom', base_url: '', api_key: '', agent: 'super-agent' };
+    return { model: '', provider: 'custom', base_url: '', api_key: '', agent: hermesAgent };
   }
 });
 
