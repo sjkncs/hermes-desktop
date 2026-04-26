@@ -1,0 +1,55 @@
+{
+  "name": "hermes-desktop",
+  "version": "0.11.0",
+  "description": "Hermes Agent - Super Intelligent AI Desktop App",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win",
+    "build:dir": "electron-builder --win --dir"
+  },
+  "author": "Hermes Agent",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "sharp": "^0.34.5"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
+    "node-pty": "^1.1.0"
+  },
+  "build": {
+    "appId": "com.hermes-agent.desktop",
+    "productName": "Hermes Desktop",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "Hermes-Desktop-${version}-Setup.exe"
+    },
+    "portable": {
+      "artifactName": "Hermes-Desktop.exe"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "assets/**/*",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../hermes-agent/dist/Hermes.exe",
+        "to": "hermes/Hermes.exe"
+      }
+    ],
+    "asar": true
+  }
+}
