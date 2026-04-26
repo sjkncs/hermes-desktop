@@ -6,6 +6,7 @@ const { ipcRenderer } = require('electron');
 let terminal = null;
 let fitAddon = null;
 let isRunning = false;
+let suppressExit = false; // suppress exit handler during update/rollback/switch
 
 const THEMES = {
   light: {
@@ -207,21 +208,24 @@ toggleKeyVis.addEventListener('click', () => {
 btnUpdate.addEventListener('click', async () => {
   btnUpdate.disabled = true;
   btnUpdate.textContent = 'Updating...';
+  suppressExit = true;
+  isRunning = false;
   if (terminal) terminal.writeln('\r\nUpdating Hermes...');
+  setStatus('starting', 'Updating...');
   const result = await ipcRenderer.invoke('hermes:update');
   btnUpdate.disabled = false;
   btnUpdate.textContent = 'Update';
   if (result.status === 'updated') {
     if (terminal) terminal.writeln('Update complete, restarting...');
-    isRunning = false;
-    setStatus('starting', 'Updating...');
     // Refresh version display
     ipcRenderer.invoke('hermes:getVersion').then(ver => {
       cfgVersion.textContent = ver.version + (ver.git ? ' (' + ver.git + ')' : '');
     }).catch(() => {});
-    setTimeout(() => startHermes(), 1500);
+    setTimeout(() => { suppressExit = false; startHermes(); }, 1500);
   } else {
+    suppressExit = false;
     if (terminal) terminal.writeln('\r\nUpdate failed: ' + (result.message || 'Unknown error'));
+    setStatus('error', 'Update failed');
   }
 });
 
@@ -238,20 +242,23 @@ btnRollback.addEventListener('click', async () => {
   if (!choice) return;
   btnRollback.disabled = true;
   btnRollback.textContent = 'Rolling back...';
+  suppressExit = true;
+  isRunning = false;
   if (terminal) terminal.writeln('\r\nRolling back to ' + choice + '...');
+  setStatus('starting', 'Rolling back...');
   const result = await ipcRenderer.invoke('hermes:rollback', choice);
   btnRollback.disabled = false;
   btnRollback.textContent = 'Rollback';
   if (result.status === 'rolled_back') {
     if (terminal) terminal.writeln('Rolled back to ' + choice + ', restarting...');
-    isRunning = false;
-    setStatus('starting', 'Rolling back...');
     ipcRenderer.invoke('hermes:getVersion').then(ver => {
       cfgVersion.textContent = ver.version + (ver.git ? ' (' + ver.git + ')' : '');
     }).catch(() => {});
-    setTimeout(() => startHermes(), 1500);
+    setTimeout(() => { suppressExit = false; startHermes(); }, 1500);
   } else {
+    suppressExit = false;
     if (terminal) terminal.writeln('\r\nRollback failed: ' + (result.message || 'Unknown error'));
+    setStatus('error', 'Rollback failed');
   }
 });
 
@@ -272,13 +279,15 @@ settingsSave.addEventListener('click', async () => {
   closeSettings();
   if (terminal) terminal.writeln('\r\nSaving config and restarting...');
   isRunning = false;
+  suppressExit = true;
   setStatus('starting', 'Switching...');
 
   const result = await ipcRenderer.invoke('hermes:saveConfig', config);
   if (result.status === 'saved') {
     if (terminal) terminal.writeln('Config saved: ' + config.provider + ' / ' + config.model);
-    setTimeout(() => startHermes(), 1500);
+    setTimeout(() => { suppressExit = false; startHermes(); }, 1500);
   } else {
+    suppressExit = false;
     if (terminal) terminal.writeln('\r\nSave failed: ' + (result.message || 'Unknown error'));
     setStatus('error', 'Config error');
   }
@@ -316,11 +325,10 @@ ipcRenderer.on('hermes:stdout', (_event, data) => {
 
 ipcRenderer.on('hermes:exit', (_event, code) => {
   isRunning = false;
-  // Don't override status if we're in the middle of switching providers
-  if (statusText.textContent !== 'Switching...') {
-    if (terminal) terminal.writeln('\r\nProcess exited with code ' + code);
-    setStatus('offline', 'Exited (' + code + ')');
-  }
+  // Don't override status during update/rollback/switch operations
+  if (suppressExit) return;
+  if (terminal) terminal.writeln('\r\nProcess exited with code ' + code);
+  setStatus('offline', 'Exited (' + code + ')');
 });
 
 ipcRenderer.on('hermes:error', (_event, msg) => {
