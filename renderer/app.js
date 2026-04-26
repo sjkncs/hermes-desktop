@@ -105,7 +105,17 @@ const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
 const appVersion = document.getElementById('app-version');
 const themeBtn = document.getElementById('theme-btn');
-const modelSelect = document.getElementById('model-select');
+const settingsBtn = document.getElementById('settings-btn');
+const settingsModal = document.getElementById('settings-modal');
+const settingsClose = document.getElementById('settings-close');
+const settingsCancel = document.getElementById('settings-cancel');
+const settingsSave = document.getElementById('settings-save');
+const toggleKeyVis = document.getElementById('toggle-key-vis');
+const cfgProvider = document.getElementById('cfg-provider');
+const cfgModel = document.getElementById('cfg-model');
+const cfgBaseurl = document.getElementById('cfg-baseurl');
+const cfgApikey = document.getElementById('cfg-apikey');
+const cfgAgent = document.getElementById('cfg-agent');
 
 function setStatus(state, text) {
   statusIndicator.className = 'status-' + state;
@@ -137,18 +147,79 @@ async function startHermes() {
   }
 }
 
-// --- Model/Provider Switch ---
-modelSelect.addEventListener('change', async () => {
-  const providerKey = modelSelect.value;
-  const result = await ipcRenderer.invoke('hermes:switchProvider', providerKey);
-  if (result.status === 'switched') {
-    if (terminal) terminal.writeln(`\r\nSwitched to ${result.provider} (${result.model}), restarting...`);
-    isRunning = false;
-    setStatus('starting', 'Switching...');
-    // Auto-restart after brief delay
+// --- Settings Modal ---
+const PROVIDER_PRESETS = {
+  custom: { model: '', base_url: '', key_env: 'CUSTOM_API_KEY' },
+  openai: { model: 'gpt-4o', base_url: 'https://api.openai.com/v1', key_env: 'OPENAI_API_KEY' },
+  anthropic: { model: 'claude-sonnet-4-20250514', base_url: 'https://api.anthropic.com', key_env: 'ANTHROPIC_API_KEY' },
+  openrouter: { model: 'anthropic/claude-sonnet-4', base_url: 'https://openrouter.ai/api/v1', key_env: 'OPENROUTER_API_KEY' },
+  nous: { model: 'Hermes-3-Llama-3.1-70B', base_url: 'https://api.nousresearch.com/v1', key_env: 'NOUS_API_KEY' },
+};
+
+cfgProvider.addEventListener('change', () => {
+  const preset = PROVIDER_PRESETS[cfgProvider.value];
+  if (preset) {
+    cfgModel.value = preset.model;
+    cfgBaseurl.value = preset.base_url;
+    cfgApikey.placeholder = preset.key_env + '=...';
+  }
+});
+
+function openSettings() {
+  settingsModal.classList.remove('hidden');
+  // Load current config
+  ipcRenderer.invoke('hermes:getCurrentProvider').then(current => {
+    cfgProvider.value = current.provider || 'custom';
+    cfgModel.value = current.model || '';
+    cfgBaseurl.value = current.base_url || '';
+    cfgApikey.value = current.api_key || '';
+    cfgAgent.value = current.agent || 'super-agent';
+  }).catch(() => {});
+}
+
+function closeSettings() {
+  settingsModal.classList.add('hidden');
+}
+
+settingsBtn.addEventListener('click', openSettings);
+settingsClose.addEventListener('click', closeSettings);
+settingsCancel.addEventListener('click', closeSettings);
+
+settingsModal.addEventListener('click', (e) => {
+  if (e.target === settingsModal) closeSettings();
+});
+
+toggleKeyVis.addEventListener('click', () => {
+  const input = cfgApikey;
+  input.type = input.type === 'password' ? 'text' : 'password';
+});
+
+settingsSave.addEventListener('click', async () => {
+  const config = {
+    provider: cfgProvider.value,
+    model: cfgModel.value.trim(),
+    base_url: cfgBaseurl.value.trim(),
+    api_key: cfgApikey.value.trim(),
+    agent: cfgAgent.value,
+  };
+
+  if (!config.model) {
+    cfgModel.focus();
+    return;
+  }
+
+  closeSettings();
+  if (terminal) terminal.writeln('\r\nSaving config and restarting...');
+  isRunning = false;
+  setStatus('starting', 'Switching...');
+
+  const result = await ipcRenderer.invoke('hermes:saveConfig', config);
+  if (result.status === 'saved') {
+    if (terminal) terminal.writeln('Config saved: ' + config.provider + ' / ' + config.model);
     setTimeout(() => startHermes(), 1500);
   } else {
-    if (terminal) terminal.writeln('\r\nSwitch failed: ' + (result.message || 'Unknown error'));
+    if (terminal) terminal.writeln('\r\nSave failed: ' + (result.message || 'Unknown error'));
+    setStatus('error', 'Config error');
   }
 });
 
@@ -208,19 +279,11 @@ async function init() {
     appVersion.textContent = 'v0.11.0';
   }
 
-  // Load current provider into select
+  // Load current provider info for display
   try {
     const current = await ipcRenderer.invoke('hermes:getCurrentProvider');
-    if (current.provider === 'custom' && current.model.includes('LongCat')) {
-      modelSelect.value = 'longcat';
-    } else if (current.provider === 'openrouter') {
-      modelSelect.value = 'openrouter';
-    } else if (current.provider === 'openai') {
-      modelSelect.value = 'openai';
-    } else if (current.provider === 'anthropic') {
-      modelSelect.value = 'anthropic';
-    } else if (current.provider === 'nous') {
-      modelSelect.value = 'nous';
+    if (current.model) {
+      statusText.textContent = current.model;
     }
   } catch {}
 
