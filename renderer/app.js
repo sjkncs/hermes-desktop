@@ -126,6 +126,20 @@ const btnBrowseWs = document.getElementById('btn-browse-ws');
 const cfgResume = document.getElementById('cfg-resume');
 const btnLastSession = document.getElementById('btn-last-session');
 const updateBadge = document.getElementById('update-badge');
+const cfgMaxTurns = document.getElementById('cfg-max-turns');
+const cfgGwTimeout = document.getElementById('cfg-gw-timeout');
+const cfgApiRetries = document.getElementById('cfg-api-retries');
+const cfgTermTimeout = document.getElementById('cfg-term-timeout');
+const valMaxTurns = document.getElementById('val-max-turns');
+const valGwTimeout = document.getElementById('val-gw-timeout');
+const valApiRetries = document.getElementById('val-api-retries');
+const valTermTimeout = document.getElementById('val-term-timeout');
+
+// Slider value display
+cfgMaxTurns.addEventListener('input', () => valMaxTurns.textContent = cfgMaxTurns.value);
+cfgGwTimeout.addEventListener('input', () => valGwTimeout.textContent = cfgGwTimeout.value);
+cfgApiRetries.addEventListener('input', () => valApiRetries.textContent = cfgApiRetries.value);
+cfgTermTimeout.addEventListener('input', () => valTermTimeout.textContent = cfgTermTimeout.value);
 
 function setUpdateStatus(state, text) {
   updateStatus.textContent = text;
@@ -211,6 +225,11 @@ function openSettings() {
     cfgAgent.value = current.agent || 'super-agent';
     cfgWorkspace.value = current.workspace || '';
     cfgResume.value = current.resume || '';
+    // Load slider values
+    if (current.max_turns) { cfgMaxTurns.value = current.max_turns; valMaxTurns.textContent = current.max_turns; }
+    if (current.gateway_timeout) { cfgGwTimeout.value = current.gateway_timeout; valGwTimeout.textContent = current.gateway_timeout; }
+    if (current.api_max_retries !== undefined) { cfgApiRetries.value = current.api_max_retries; valApiRetries.textContent = current.api_max_retries; }
+    if (current.term_timeout) { cfgTermTimeout.value = current.term_timeout; valTermTimeout.textContent = current.term_timeout; }
   }).catch(() => {});
   // Load version info
   ipcRenderer.invoke('hermes:getVersion').then(ver => {
@@ -323,6 +342,10 @@ settingsSave.addEventListener('click', async () => {
     agent: cfgAgent.value,
     workspace: cfgWorkspace.value.trim(),
     resume: cfgResume.value.trim(),
+    max_turns: parseInt(cfgMaxTurns.value),
+    gateway_timeout: parseInt(cfgGwTimeout.value),
+    api_max_retries: parseInt(cfgApiRetries.value),
+    term_timeout: parseInt(cfgTermTimeout.value),
   };
 
   if (!config.model) {
