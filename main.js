@@ -349,15 +349,15 @@ async function ghDownloadAndExtract(ref) {
   const { execSync } = require('child_process');
   const fs = require('fs');
   const https = require('https');
-  const tarPath = path.join(os.tmpdir(), `hermes-agent-${ref}.tar.gz`);
+  const zipPath = path.join(os.tmpdir(), `hermes-agent-${ref}.zip`);
   const tmpDir = path.join(os.tmpdir(), `hermes-update-${Date.now()}`);
 
   sendProgress('Getting GitHub auth token...');
   const token = execSync('gh auth token', { encoding: 'utf8', timeout: 10000 }).trim();
-  const url = `https://api.github.com/repos/${HERMES_REPO}/tarball/${ref}`;
+  // Use zipball instead of tarball — PowerShell can extract zip natively
+  const url = `https://api.github.com/repos/${HERMES_REPO}/zipball/${ref}`;
 
   sendProgress('Downloading ' + ref + ' from GitHub...');
-  // Download tarball via Node.js https (avoids cmd.exe timeout)
   const download = (followUrl) => new Promise((resolve, reject) => {
     const req = https.get(followUrl, {
       headers: {
@@ -375,7 +375,7 @@ async function ghDownloadAndExtract(ref) {
         reject(new Error(`HTTP ${res.statusCode}`));
         return;
       }
-      const file = fs.createWriteStream(tarPath);
+      const file = fs.createWriteStream(zipPath);
       res.pipe(file);
       file.on('finish', () => { file.close(); resolve(); });
       file.on('error', reject);
@@ -387,9 +387,21 @@ async function ghDownloadAndExtract(ref) {
   await download(url);
   sendProgress('Download complete, extracting...');
 
-  // Extract
+  // Extract using PowerShell (handles Windows paths with spaces correctly)
   fs.mkdirSync(tmpDir, { recursive: true });
-  execSync(`tar -xzf "${tarPath}" -C "${tmpDir}"`, { timeout: 60000 });
+  try {
+    execSync(
+      `powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${tmpDir}' -Force"`,
+      { timeout: 120000 }
+    );
+  } catch (e) {
+    sendProgress('PowerShell extract failed, trying tar fallback...');
+    try {
+      execSync(`tar -xzf "${zipPath}" -C "${tmpDir}"`, { timeout: 60000 });
+    } catch {
+      throw new Error('Failed to extract downloaded archive');
+    }
+  }
 
   // Find extracted subfolder
   const entries = fs.readdirSync(tmpDir);
@@ -403,7 +415,7 @@ async function ghDownloadAndExtract(ref) {
 
   // Cleanup
   try { fs.rmSync(tmpDir, { recursive: true }); } catch {}
-  try { fs.unlinkSync(tarPath); } catch {}
+  try { fs.unlinkSync(zipPath); } catch {}
 }
 
 // Helper: send progress message to renderer terminal
