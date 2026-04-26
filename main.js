@@ -352,10 +352,11 @@ async function ghDownloadAndExtract(ref) {
   const tarPath = path.join(os.tmpdir(), `hermes-agent-${ref}.tar.gz`);
   const tmpDir = path.join(os.tmpdir(), `hermes-update-${Date.now()}`);
 
-  // Get gh token
+  sendProgress('Getting GitHub auth token...');
   const token = execSync('gh auth token', { encoding: 'utf8', timeout: 10000 }).trim();
   const url = `https://api.github.com/repos/${HERMES_REPO}/tarball/${ref}`;
 
+  sendProgress('Downloading ' + ref + ' from GitHub...');
   // Download tarball via Node.js https (avoids cmd.exe timeout)
   const download = (followUrl) => new Promise((resolve, reject) => {
     const req = https.get(followUrl, {
@@ -384,6 +385,7 @@ async function ghDownloadAndExtract(ref) {
   });
 
   await download(url);
+  sendProgress('Download complete, extracting...');
 
   // Extract
   fs.mkdirSync(tmpDir, { recursive: true });
@@ -397,57 +399,113 @@ async function ghDownloadAndExtract(ref) {
 
   // Copy files over (skip .git)
   copyDirRecursive(srcDir, HERMES_DIR_SRC);
+  sendProgress('Files copied successfully.');
 
   // Cleanup
   try { fs.rmSync(tmpDir, { recursive: true }); } catch {}
   try { fs.unlinkSync(tarPath); } catch {}
 }
 
+// Helper: send progress message to renderer terminal
+function sendProgress(msg) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('hermes:stdout', '\r\n\x1b[36m[Hermes]\x1b[0m ' + msg + '\r\n');
+  }
+}
+
+// Helper: run a command and stream output to terminal
+function runCommandStreaming(cmd, args, opts = {}) {
+  const { spawn } = require('child_process');
+  return new Promise((resolve, reject) => {
+    const proc = spawn(cmd, args, {
+      cwd: opts.cwd || HERMES_DIR_SRC,
+      env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' },
+      timeout: opts.timeout || 120000,
+    });
+    let stderr = '';
+    proc.stdout.on('data', (data) => {
+      const text = data.toString();
+      sendProgress(text.trimEnd());
+    });
+    proc.stderr.on('data', (data) => {
+      const text = data.toString();
+      stderr += text;
+      sendProgress(text.trimEnd());
+    });
+    proc.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `Exit code ${code}`));
+    });
+    proc.on('error', reject);
+  });
+}
+
 ipcMain.handle('hermes:update', async () => {
-  const { execSync } = require('child_process');
   try {
     safeKillPty();
+    sendProgress('Starting update...');
 
     // Ensure we're on main branch first
-    try { runGit('checkout main', { timeout: 10000 }); } catch {}
+    try {
+      sendProgress('Checking out main branch...');
+      runGit('checkout main', { timeout: 10000 });
+    } catch {}
 
     // Try git pull, fall back to gh-based download if network fails
+    let pulled = false;
     try {
+      sendProgress('Pulling latest code (git pull)...');
       runGit('pull origin main', { timeout: 60000 });
+      pulled = true;
     } catch {
-      // git pull failed (network issue) — use gh api to download tarball
+      sendProgress('git pull failed, downloading via GitHub API...');
+    }
+
+    if (!pulled) {
       await ghDownloadAndExtract('main');
     }
 
-    execSync(`"${PYTHON}" -m pip install -e . --quiet`, {
+    sendProgress('Installing updated package (pip install)...');
+    const { execSync } = require('child_process');
+    execSync(`"${PYTHON}" -m pip install -e .`, {
       encoding: 'utf8', timeout: 120000, cwd: HERMES_DIR_SRC,
     });
 
+    sendProgress('Update complete!');
     return { status: 'updated' };
   } catch (err) {
+    sendProgress('Update failed: ' + err.message);
     return { status: 'error', message: err.message };
   }
 });
 
 ipcMain.handle('hermes:rollback', async (event, tag) => {
-  const { execSync } = require('child_process');
   try {
     safeKillPty();
+    sendProgress('Rolling back to ' + tag + '...');
 
     // Try local git checkout first
+    let checkedOut = false;
     try {
       runGit(`checkout ${tag}`, { timeout: 30000 });
-    } catch {
-      // Tag not found locally or network issue — download from gh
+      checkedOut = true;
+    } catch {}
+
+    if (!checkedOut) {
+      sendProgress('Local checkout failed, downloading ' + tag + ' via GitHub API...');
       await ghDownloadAndExtract(tag);
     }
 
-    execSync(`"${PYTHON}" -m pip install -e . --quiet`, {
+    sendProgress('Installing version ' + tag + ' (pip install)...');
+    const { execSync } = require('child_process');
+    execSync(`"${PYTHON}" -m pip install -e .`, {
       encoding: 'utf8', timeout: 120000, cwd: HERMES_DIR_SRC,
     });
 
+    sendProgress('Rollback to ' + tag + ' complete!');
     return { status: 'rolled_back', tag };
   } catch (err) {
+    sendProgress('Rollback failed: ' + err.message);
     return { status: 'error', message: err.message };
   }
 });
