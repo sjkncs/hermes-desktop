@@ -9,6 +9,13 @@ const isDev = !app.isPackaged;
 let hermesAgent = 'super-agent';
 const PYTHON = 'C:\\Users\\Administrator\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe';
 
+function safeKillPty() {
+  if (ptyProcess) {
+    try { ptyProcess.kill(); } catch {}
+    ptyProcess = null;
+  }
+}
+
 function getHermesCommand() {
   if (isDev) {
     return {
@@ -121,8 +128,7 @@ ipcMain.handle('hermes:resize', async (event, cols, rows) => {
 
 ipcMain.handle('hermes:stop', async () => {
   if (ptyProcess) {
-    ptyProcess.kill();
-    ptyProcess = null;
+    safeKillPty();
     return { status: 'stopped' };
   }
   return { status: 'not_running' };
@@ -211,10 +217,7 @@ ipcMain.handle('hermes:saveConfig', async (event, cfg) => {
     }
 
     // Kill current process so it restarts with new config
-    if (ptyProcess) {
-      ptyProcess.kill();
-      ptyProcess = null;
-    }
+    safeKillPty();
 
     return { status: 'saved' };
   } catch (err) {
@@ -403,7 +406,7 @@ async function ghDownloadAndExtract(ref) {
 ipcMain.handle('hermes:update', async () => {
   const { execSync } = require('child_process');
   try {
-    if (ptyProcess) { ptyProcess.kill(); ptyProcess = null; }
+    safeKillPty();
 
     // Ensure we're on main branch first
     try { runGit('checkout main', { timeout: 10000 }); } catch {}
@@ -429,7 +432,7 @@ ipcMain.handle('hermes:update', async () => {
 ipcMain.handle('hermes:rollback', async (event, tag) => {
   const { execSync } = require('child_process');
   try {
-    if (ptyProcess) { ptyProcess.kill(); ptyProcess = null; }
+    safeKillPty();
 
     // Try local git checkout first
     try {
@@ -454,16 +457,12 @@ ipcMain.handle('hermes:rollback', async (event, tag) => {
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
-  if (ptyProcess) {
-    ptyProcess.kill();
-  }
+  safeKillPty();
   app.quit();
 });
 
 app.on('before-quit', () => {
-  if (ptyProcess) {
-    ptyProcess.kill();
-  }
+  safeKillPty();
 });
 
 app.on('activate', () => {
