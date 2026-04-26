@@ -15,13 +15,7 @@
       <span id="app-version"></span>
     </div>
     <div id="titlebar-right">
-      <select id="model-select" class="model-select" title="Switch model/provider">
-        <option value="longcat">LongCat</option>
-        <option value="openrouter">OpenRouter</option>
-        <option value="openai">OpenAI</option>
-        <option value="anthropic">Anthropic</option>
-        <option value="nous">Nous</option>
-      </select>
+      <button id="settings-btn" class="btn-icon" title="API Settings">&#9881;</button>
       <button id="theme-btn" class="btn-icon" title="Toggle theme">&#9788;</button>
       <span id="status-indicator" class="status-offline"></span>
       <span id="status-text">Offline</span>
@@ -29,6 +23,57 @@
   </div>
 
   <div id="terminal-container"></div>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>API Settings</h3>
+        <button id="settings-close" class="btn-icon">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="cfg-provider">Provider</label>
+          <select id="cfg-provider">
+            <option value="custom">Custom (OpenAI-compatible)</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="nous">Nous</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="cfg-model">Model</label>
+          <input type="text" id="cfg-model" placeholder="e.g. gpt-4o, claude-sonnet-4-20250514" />
+        </div>
+        <div class="form-group">
+          <label for="cfg-baseurl">Base URL</label>
+          <input type="text" id="cfg-baseurl" placeholder="e.g. https://api.openai.com/v1" />
+        </div>
+        <div class="form-group">
+          <label for="cfg-apikey">API Key</label>
+          <div class="input-with-toggle">
+            <input type="password" id="cfg-apikey" placeholder="sk-..." />
+            <button id="toggle-key-vis" class="btn-icon btn-small">&#128065;</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="cfg-agent">Agent Skill</label>
+          <select id="cfg-agent">
+            <option value="super-agent">Super Agent</option>
+            <option value="default">Default</option>
+          </select>
+        </div>
+        <div class="form-hint">
+          Changes update <code>~/.hermes/config.yaml</code> and <code>~/.hermes/.env</code>, then restart Hermes.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="settings-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="settings-save" class="btn btn-primary">Save &amp; Restart</button>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>
