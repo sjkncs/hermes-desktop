@@ -120,6 +120,12 @@ const cfgAgent = document.getElementById('cfg-agent');
 const cfgVersion = document.getElementById('cfg-version');
 const btnUpdate = document.getElementById('btn-update');
 const btnRollback = document.getElementById('btn-rollback');
+const updateStatus = document.getElementById('update-status');
+
+function setUpdateStatus(state, text) {
+  updateStatus.textContent = text;
+  updateStatus.className = 'form-hint update-' + state;
+}
 
 function setStatus(state, text) {
   statusIndicator.className = 'status-' + state;
@@ -210,33 +216,42 @@ btnUpdate.addEventListener('click', async () => {
   btnUpdate.textContent = 'Updating...';
   suppressExit = true;
   isRunning = false;
+  setUpdateStatus('running', 'Starting update...');
   if (terminal) terminal.writeln('\r\nUpdating Hermes...');
   setStatus('starting', 'Updating...');
-  const result = await ipcRenderer.invoke('hermes:update');
-  btnUpdate.disabled = false;
-  btnUpdate.textContent = 'Update';
-  if (result.status === 'updated') {
-    if (terminal) terminal.writeln('Update complete, restarting...');
-    // Refresh version display
-    ipcRenderer.invoke('hermes:getVersion').then(ver => {
-      cfgVersion.textContent = ver.version + (ver.git ? ' (' + ver.git + ')' : '');
-    }).catch(() => {});
-    setTimeout(() => { suppressExit = false; startHermes(); }, 1500);
-  } else {
+  try {
+    const result = await ipcRenderer.invoke('hermes:update');
+    btnUpdate.disabled = false;
+    btnUpdate.textContent = 'Update';
+    if (result.status === 'updated') {
+      setUpdateStatus('success', 'Update complete! Restarting...');
+      if (terminal) terminal.writeln('Update complete, restarting...');
+      ipcRenderer.invoke('hermes:getVersion').then(ver => {
+        cfgVersion.textContent = ver.version + (ver.git ? ' (' + ver.git + ')' : '');
+      }).catch(() => {});
+      setTimeout(() => { suppressExit = false; startHermes(); }, 1500);
+    } else {
+      suppressExit = false;
+      setUpdateStatus('error', 'Failed: ' + (result.message || 'Unknown error'));
+      if (terminal) terminal.writeln('\r\nUpdate failed: ' + (result.message || 'Unknown error'));
+      setStatus('error', 'Update failed');
+    }
+  } catch (e) {
+    btnUpdate.disabled = false;
+    btnUpdate.textContent = 'Update';
     suppressExit = false;
-    if (terminal) terminal.writeln('\r\nUpdate failed: ' + (result.message || 'Unknown error'));
-    setStatus('error', 'Update failed');
+    setUpdateStatus('error', 'Error: ' + e.message);
+    if (terminal) terminal.writeln('\r\nUpdate error: ' + e.message);
+    setStatus('error', 'Update error');
   }
 });
 
 btnRollback.addEventListener('click', async () => {
-  // Get available tags and let user pick
   const tagsResult = await ipcRenderer.invoke('hermes:getTags');
   if (!tagsResult.tags.length) {
-    if (terminal) terminal.writeln('\r\nNo version tags found');
+    setUpdateStatus('error', 'No version tags found');
     return;
   }
-  // Simple prompt for tag selection
   const tagList = tagsResult.tags.slice(0, 10).join('\n');
   const choice = prompt('Select version to rollback to:\n' + tagList, tagsResult.tags[0]);
   if (!choice) return;
@@ -244,21 +259,33 @@ btnRollback.addEventListener('click', async () => {
   btnRollback.textContent = 'Rolling back...';
   suppressExit = true;
   isRunning = false;
+  setUpdateStatus('running', 'Rolling back to ' + choice + '...');
   if (terminal) terminal.writeln('\r\nRolling back to ' + choice + '...');
   setStatus('starting', 'Rolling back...');
-  const result = await ipcRenderer.invoke('hermes:rollback', choice);
-  btnRollback.disabled = false;
-  btnRollback.textContent = 'Rollback';
-  if (result.status === 'rolled_back') {
-    if (terminal) terminal.writeln('Rolled back to ' + choice + ', restarting...');
-    ipcRenderer.invoke('hermes:getVersion').then(ver => {
-      cfgVersion.textContent = ver.version + (ver.git ? ' (' + ver.git + ')' : '');
-    }).catch(() => {});
-    setTimeout(() => { suppressExit = false; startHermes(); }, 1500);
-  } else {
+  try {
+    const result = await ipcRenderer.invoke('hermes:rollback', choice);
+    btnRollback.disabled = false;
+    btnRollback.textContent = 'Rollback';
+    if (result.status === 'rolled_back') {
+      setUpdateStatus('success', 'Rolled back to ' + choice + '! Restarting...');
+      if (terminal) terminal.writeln('Rolled back to ' + choice + ', restarting...');
+      ipcRenderer.invoke('hermes:getVersion').then(ver => {
+        cfgVersion.textContent = ver.version + (ver.git ? ' (' + ver.git + ')' : '');
+      }).catch(() => {});
+      setTimeout(() => { suppressExit = false; startHermes(); }, 1500);
+    } else {
+      suppressExit = false;
+      setUpdateStatus('error', 'Rollback failed: ' + (result.message || 'Unknown error'));
+      if (terminal) terminal.writeln('\r\nRollback failed: ' + (result.message || 'Unknown error'));
+      setStatus('error', 'Rollback failed');
+    }
+  } catch (e) {
+    btnRollback.disabled = false;
+    btnRollback.textContent = 'Rollback';
     suppressExit = false;
-    if (terminal) terminal.writeln('\r\nRollback failed: ' + (result.message || 'Unknown error'));
-    setStatus('error', 'Rollback failed');
+    setUpdateStatus('error', 'Error: ' + e.message);
+    if (terminal) terminal.writeln('\r\nRollback error: ' + e.message);
+    setStatus('error', 'Rollback error');
   }
 });
 
