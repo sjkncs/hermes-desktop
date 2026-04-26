@@ -325,9 +325,52 @@ ipcMain.handle('hermes:getTags', async () => {
   }
 });
 
-ipcMain.handle('hermes:update', async () => {
+// Helper: copy directory recursively, skipping .git
+function copyDirRecursive(src, dest) {
+  const fs = require('fs');
+  if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (entry.name === '.git') continue;
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+// Helper: download and extract repo via gh api
+function ghDownloadAndExtract(ref) {
   const { execSync } = require('child_process');
   const fs = require('fs');
+  const tarPath = path.join(os.tmpdir(), `hermes-agent-${ref}.tar.gz`);
+  const tmpDir = path.join(os.tmpdir(), `hermes-update-${Date.now()}`);
+
+  // Download tarball via gh
+  runGh(`api /repos/${HERMES_REPO}/tarball/${ref} > "${tarPath}"`, { timeout: 120000 });
+
+  // Extract
+  fs.mkdirSync(tmpDir, { recursive: true });
+  execSync(`tar -xzf "${tarPath}" -C "${tmpDir}"`, { timeout: 60000 });
+
+  // Find extracted subfolder
+  const entries = fs.readdirSync(tmpDir);
+  const srcDir = entries.length === 1
+    ? path.join(tmpDir, entries[0])
+    : tmpDir;
+
+  // Copy files over (skip .git)
+  copyDirRecursive(srcDir, HERMES_DIR_SRC);
+
+  // Cleanup
+  try { fs.rmSync(tmpDir, { recursive: true }); } catch {}
+  try { fs.unlinkSync(tarPath); } catch {}
+}
+
+ipcMain.handle('hermes:update', async () => {
+  const { execSync } = require('child_process');
   try {
     if (ptyProcess) { ptyProcess.kill(); ptyProcess = null; }
 
@@ -337,24 +380,9 @@ ipcMain.handle('hermes:update', async () => {
     // Try git pull, fall back to gh-based download if network fails
     try {
       runGit('pull origin main', { timeout: 60000 });
-    } catch (pullErr) {
+    } catch {
       // git pull failed (network issue) — use gh api to download tarball
-      const tarPath = path.join(os.tmpdir(), 'hermes-agent-update.tar.gz');
-      runGh(`api /repos/${HERMES_REPO}/tarball/main > "${tarPath}"`, { timeout: 120000 });
-
-      // Extract tarball over the repo (preserves .git)
-      const tmpExtract = path.join(os.tmpdir(), 'hermes-agent-update');
-      try { fs.rmSync(tmpExtract, { recursive: true }); } catch {}
-      execSync(`tar -xzf "${tarPath}" -C "${os.tmpdir()}"`, { timeout: 60000 });
-      // Find extracted folder (gh names it NousResearch-hermes-agent-xxxxx)
-      const entries = fs.readdirSync(os.tmpdir()).filter(e => e.startsWith('NousResearch-hermes-agent'));
-      if (entries.length) {
-        const srcDir = path.join(os.tmpdir(), entries[entries.length - 1]);
-        // Copy files over (exclude .git)
-        execSync(`xcopy "${srcDir}" "${HERMES_DIR_SRC}" /E /Y /Q /EXCLUDE:.git\\`, { timeout: 60000 });
-        try { fs.rmSync(srcDir, { recursive: true }); } catch {}
-      }
-      try { fs.unlinkSync(tarPath); } catch {}
+      ghDownloadAndExtract('main');
     }
 
     execSync(`"${PYTHON}" -m pip install -e . --quiet`, {
@@ -369,7 +397,6 @@ ipcMain.handle('hermes:update', async () => {
 
 ipcMain.handle('hermes:rollback', async (event, tag) => {
   const { execSync } = require('child_process');
-  const fs = require('fs');
   try {
     if (ptyProcess) { ptyProcess.kill(); ptyProcess = null; }
 
@@ -377,20 +404,8 @@ ipcMain.handle('hermes:rollback', async (event, tag) => {
     try {
       runGit(`checkout ${tag}`, { timeout: 30000 });
     } catch {
-      // Tag not found locally — download from gh
-      const tarPath = path.join(os.tmpdir(), `hermes-agent-${tag}.tar.gz`);
-      runGh(`api /repos/${HERMES_REPO}/tarball/${tag} > "${tarPath}"`, { timeout: 120000 });
-
-      const tmpExtract = path.join(os.tmpdir(), `hermes-agent-rollback`);
-      try { fs.rmSync(tmpExtract, { recursive: true }); } catch {}
-      execSync(`tar -xzf "${tarPath}" -C "${os.tmpdir()}"`, { timeout: 60000 });
-      const entries = fs.readdirSync(os.tmpdir()).filter(e => e.startsWith('NousResearch-hermes-agent'));
-      if (entries.length) {
-        const srcDir = path.join(os.tmpdir(), entries[entries.length - 1]);
-        execSync(`xcopy "${srcDir}" "${HERMES_DIR_SRC}" /E /Y /Q`, { timeout: 60000 });
-        try { fs.rmSync(srcDir, { recursive: true }); } catch {}
-      }
-      try { fs.unlinkSync(tarPath); } catch {}
+      // Tag not found locally or network issue — download from gh
+      ghDownloadAndExtract(tag);
     }
 
     execSync(`"${PYTHON}" -m pip install -e . --quiet`, {
