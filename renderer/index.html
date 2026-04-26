@@ -84,6 +84,26 @@
         </div>
         <hr class="modal-divider"/>
         <div class="form-group">
+          <label>Agent Parameters</label>
+          <div class="slider-group">
+            <label class="slider-label">Max Turns <span id="val-max-turns">90</span></label>
+            <input type="range" id="cfg-max-turns" min="1" max="200" value="90" class="slider" title="Max Turns" />
+          </div>
+          <div class="slider-group">
+            <label class="slider-label">Gateway Timeout <span id="val-gw-timeout">1800</span>s</label>
+            <input type="range" id="cfg-gw-timeout" min="60" max="7200" value="1800" step="60" class="slider" title="Gateway Timeout" />
+          </div>
+          <div class="slider-group">
+            <label class="slider-label">API Retries <span id="val-api-retries">3</span></label>
+            <input type="range" id="cfg-api-retries" min="0" max="10" value="3" class="slider" title="API Retries" />
+          </div>
+          <div class="slider-group">
+            <label class="slider-label">Terminal Timeout <span id="val-term-timeout">180</span>s</label>
+            <input type="range" id="cfg-term-timeout" min="10" max="600" value="180" step="10" class="slider" title="Terminal Timeout" />
+          </div>
+        </div>
+        <hr class="modal-divider"/>
+        <div class="form-group">
           <label>Hermes Version</label>
           <div class="version-row">
             <span id="cfg-version" class="version-text">checking...</span>
