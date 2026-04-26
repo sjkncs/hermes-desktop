@@ -105,6 +105,7 @@ const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
 const appVersion = document.getElementById('app-version');
 const themeBtn = document.getElementById('theme-btn');
+const modelSelect = document.getElementById('model-select');
 
 function setStatus(state, text) {
   statusIndicator.className = 'status-' + state;
@@ -135,6 +136,21 @@ async function startHermes() {
     if (terminal) terminal.writeln('Exception: ' + err.message);
   }
 }
+
+// --- Model/Provider Switch ---
+modelSelect.addEventListener('change', async () => {
+  const providerKey = modelSelect.value;
+  const result = await ipcRenderer.invoke('hermes:switchProvider', providerKey);
+  if (result.status === 'switched') {
+    if (terminal) terminal.writeln(`\r\nSwitched to ${result.provider} (${result.model}), restarting...`);
+    isRunning = false;
+    setStatus('starting', 'Switching...');
+    // Auto-restart after brief delay
+    setTimeout(() => startHermes(), 1500);
+  } else {
+    if (terminal) terminal.writeln('\r\nSwitch failed: ' + (result.message || 'Unknown error'));
+  }
+});
 
 // --- Theme Toggle ---
 themeBtn.addEventListener('click', () => {
@@ -191,6 +207,22 @@ async function init() {
   } catch {
     appVersion.textContent = 'v0.11.0';
   }
+
+  // Load current provider into select
+  try {
+    const current = await ipcRenderer.invoke('hermes:getCurrentProvider');
+    if (current.provider === 'custom' && current.model.includes('LongCat')) {
+      modelSelect.value = 'longcat';
+    } else if (current.provider === 'openrouter') {
+      modelSelect.value = 'openrouter';
+    } else if (current.provider === 'openai') {
+      modelSelect.value = 'openai';
+    } else if (current.provider === 'anthropic') {
+      modelSelect.value = 'anthropic';
+    } else if (current.provider === 'nous') {
+      modelSelect.value = 'nous';
+    }
+  } catch {}
 
   const check = await ipcRenderer.invoke('hermes:checkExe');
   if (check.exists) {
