@@ -251,6 +251,24 @@ html, body {
   font-size: 10px;
 }
 
+.modal-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+
+.version-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.version-text {
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
 #status-indicator {
   width: 8px;
   height: 8px;
