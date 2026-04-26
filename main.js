@@ -266,6 +266,26 @@ ipcMain.handle('hermes:getCurrentProvider', async () => {
 
 // --- Hermes Version / Update / Rollback ---
 const HERMES_DIR_SRC = path.join(__dirname, '..', 'hermes-agent');
+const HERMES_REPO = 'NousResearch/hermes-agent';
+
+function runGit(args, opts = {}) {
+  const { execSync } = require('child_process');
+  return execSync(`git ${args}`, {
+    encoding: 'utf8',
+    timeout: opts.timeout || 30000,
+    cwd: HERMES_DIR_SRC,
+    env: { ...process.env, GH_TOKEN: undefined }, // avoid gh token leaking to git
+  });
+}
+
+function runGh(args, opts = {}) {
+  const { execSync } = require('child_process');
+  return execSync(`gh ${args}`, {
+    encoding: 'utf8',
+    timeout: opts.timeout || 30000,
+    cwd: HERMES_DIR_SRC,
+  });
+}
 
 ipcMain.handle('hermes:getVersion', async () => {
   const { execSync } = require('child_process');
@@ -275,9 +295,7 @@ ipcMain.handle('hermes:getVersion', async () => {
     }).trim().split('\n')[0];
     let gitVer = '';
     try {
-      gitVer = execSync('git describe --tags --always', {
-        encoding: 'utf8', timeout: 5000, cwd: HERMES_DIR_SRC,
-      }).trim();
+      gitVer = runGit('describe --tags --always', { timeout: 5000 }).trim();
     } catch {}
     return { version: ver, git: gitVer };
   } catch (err) {
@@ -286,17 +304,21 @@ ipcMain.handle('hermes:getVersion', async () => {
 });
 
 ipcMain.handle('hermes:getTags', async () => {
-  const { execSync } = require('child_process');
   try {
-    // Fetch tags first to ensure they're up to date
+    // Try git fetch first, fall back to gh api for remote tags
     try {
-      execSync('git fetch --tags', {
-        encoding: 'utf8', timeout: 30000, cwd: HERMES_DIR_SRC,
-      });
-    } catch {}
-    const tags = execSync('git tag -l "v*" --sort=-v:refname', {
-      encoding: 'utf8', timeout: 5000, cwd: HERMES_DIR_SRC,
-    }).trim().split('\n').filter(Boolean);
+      runGit('fetch --tags', { timeout: 30000 });
+    } catch {
+      // Network failure — use gh api to list remote tags
+      try {
+        const remoteTags = runGh(`api /repos/${HERMES_REPO}/tags --paginate --jq ".[].name"`, { timeout: 30000 }).trim().split('\n').filter(Boolean);
+        // Create local tags from remote
+        for (const t of remoteTags) {
+          try { runGit(`tag -f ${t}`); } catch {}
+        }
+      } catch {}
+    }
+    const tags = runGit('tag -l "v*" --sort=-v:refname', { timeout: 5000 }).trim().split('\n').filter(Boolean);
     return { tags };
   } catch {
     return { tags: [] };
@@ -305,19 +327,36 @@ ipcMain.handle('hermes:getTags', async () => {
 
 ipcMain.handle('hermes:update', async () => {
   const { execSync } = require('child_process');
+  const fs = require('fs');
   try {
     if (ptyProcess) { ptyProcess.kill(); ptyProcess = null; }
 
-    // Ensure we're on main branch first (in case we were on a detached HEAD from rollback)
-    try {
-      execSync('git checkout main', {
-        encoding: 'utf8', timeout: 10000, cwd: HERMES_DIR_SRC,
-      });
-    } catch {}
+    // Ensure we're on main branch first
+    try { runGit('checkout main', { timeout: 10000 }); } catch {}
 
-    execSync('git pull origin main', {
-      encoding: 'utf8', timeout: 60000, cwd: HERMES_DIR_SRC,
-    });
+    // Try git pull, fall back to gh-based download if network fails
+    try {
+      runGit('pull origin main', { timeout: 60000 });
+    } catch (pullErr) {
+      // git pull failed (network issue) — use gh api to download tarball
+      const tarPath = path.join(os.tmpdir(), 'hermes-agent-update.tar.gz');
+      runGh(`api /repos/${HERMES_REPO}/tarball/main > "${tarPath}"`, { timeout: 120000 });
+
+      // Extract tarball over the repo (preserves .git)
+      const tmpExtract = path.join(os.tmpdir(), 'hermes-agent-update');
+      try { fs.rmSync(tmpExtract, { recursive: true }); } catch {}
+      execSync(`tar -xzf "${tarPath}" -C "${os.tmpdir()}"`, { timeout: 60000 });
+      // Find extracted folder (gh names it NousResearch-hermes-agent-xxxxx)
+      const entries = fs.readdirSync(os.tmpdir()).filter(e => e.startsWith('NousResearch-hermes-agent'));
+      if (entries.length) {
+        const srcDir = path.join(os.tmpdir(), entries[entries.length - 1]);
+        // Copy files over (exclude .git)
+        execSync(`xcopy "${srcDir}" "${HERMES_DIR_SRC}" /E /Y /Q /EXCLUDE:.git\\`, { timeout: 60000 });
+        try { fs.rmSync(srcDir, { recursive: true }); } catch {}
+      }
+      try { fs.unlinkSync(tarPath); } catch {}
+    }
+
     execSync(`"${PYTHON}" -m pip install -e . --quiet`, {
       encoding: 'utf8', timeout: 120000, cwd: HERMES_DIR_SRC,
     });
@@ -330,12 +369,30 @@ ipcMain.handle('hermes:update', async () => {
 
 ipcMain.handle('hermes:rollback', async (event, tag) => {
   const { execSync } = require('child_process');
+  const fs = require('fs');
   try {
     if (ptyProcess) { ptyProcess.kill(); ptyProcess = null; }
 
-    execSync(`git checkout ${tag}`, {
-      encoding: 'utf8', timeout: 30000, cwd: HERMES_DIR_SRC,
-    });
+    // Try local git checkout first
+    try {
+      runGit(`checkout ${tag}`, { timeout: 30000 });
+    } catch {
+      // Tag not found locally — download from gh
+      const tarPath = path.join(os.tmpdir(), `hermes-agent-${tag}.tar.gz`);
+      runGh(`api /repos/${HERMES_REPO}/tarball/${tag} > "${tarPath}"`, { timeout: 120000 });
+
+      const tmpExtract = path.join(os.tmpdir(), `hermes-agent-rollback`);
+      try { fs.rmSync(tmpExtract, { recursive: true }); } catch {}
+      execSync(`tar -xzf "${tarPath}" -C "${os.tmpdir()}"`, { timeout: 60000 });
+      const entries = fs.readdirSync(os.tmpdir()).filter(e => e.startsWith('NousResearch-hermes-agent'));
+      if (entries.length) {
+        const srcDir = path.join(os.tmpdir(), entries[entries.length - 1]);
+        execSync(`xcopy "${srcDir}" "${HERMES_DIR_SRC}" /E /Y /Q`, { timeout: 60000 });
+        try { fs.rmSync(srcDir, { recursive: true }); } catch {}
+      }
+      try { fs.unlinkSync(tarPath); } catch {}
+    }
+
     execSync(`"${PYTHON}" -m pip install -e . --quiet`, {
       encoding: 'utf8', timeout: 120000, cwd: HERMES_DIR_SRC,
     });
