@@ -116,6 +116,9 @@ const cfgModel = document.getElementById('cfg-model');
 const cfgBaseurl = document.getElementById('cfg-baseurl');
 const cfgApikey = document.getElementById('cfg-apikey');
 const cfgAgent = document.getElementById('cfg-agent');
+const cfgVersion = document.getElementById('cfg-version');
+const btnUpdate = document.getElementById('btn-update');
+const btnRollback = document.getElementById('btn-rollback');
 
 function setStatus(state, text) {
   statusIndicator.className = 'status-' + state;
@@ -177,6 +180,10 @@ function openSettings() {
     cfgApikey.placeholder = current.api_key ? 'Current: ' + current.api_key + ' (leave empty to keep)' : 'sk-...';
     cfgAgent.value = current.agent || 'super-agent';
   }).catch(() => {});
+  // Load version info
+  ipcRenderer.invoke('hermes:getVersion').then(ver => {
+    cfgVersion.textContent = ver.version + (ver.git ? ' (' + ver.git + ')' : '');
+  }).catch(() => { cfgVersion.textContent = 'unknown'; });
 }
 
 function closeSettings() {
@@ -194,6 +201,58 @@ settingsModal.addEventListener('click', (e) => {
 toggleKeyVis.addEventListener('click', () => {
   const input = cfgApikey;
   input.type = input.type === 'password' ? 'text' : 'password';
+});
+
+// --- Update / Rollback ---
+btnUpdate.addEventListener('click', async () => {
+  btnUpdate.disabled = true;
+  btnUpdate.textContent = 'Updating...';
+  if (terminal) terminal.writeln('\r\nUpdating Hermes...');
+  const result = await ipcRenderer.invoke('hermes:update');
+  btnUpdate.disabled = false;
+  btnUpdate.textContent = 'Update';
+  if (result.status === 'updated') {
+    if (terminal) terminal.writeln('Update complete, restarting...');
+    isRunning = false;
+    setStatus('starting', 'Updating...');
+    // Refresh version display
+    ipcRenderer.invoke('hermes:getVersion').then(ver => {
+      cfgVersion.textContent = ver.version + (ver.git ? ' (' + ver.git + ')' : '');
+    }).catch(() => {});
+    setTimeout(() => startHermes(), 1500);
+  } else {
+    if (terminal) terminal.writeln('\r\nUpdate failed: ' + (result.message || 'Unknown error'));
+  }
+});
+
+btnRollback.addEventListener('click', async () => {
+  // Get available tags and let user pick
+  const tagsResult = await ipcRenderer.invoke('hermes:getTags');
+  if (!tagsResult.tags.length) {
+    if (terminal) terminal.writeln('\r\nNo version tags found');
+    return;
+  }
+  // Simple prompt for tag selection
+  const tagList = tagsResult.tags.slice(0, 10).join('\n');
+  const choice = prompt('Select version to rollback to:\n' + tagList, tagsResult.tags[0]);
+  if (!choice) return;
+  btnRollback.disabled = true;
+  btnRollback.textContent = 'Rolling back...';
+  if (terminal) terminal.writeln('\r\nRolling back to ' + choice + '...');
+  const result = await ipcRenderer.invoke('hermes:rollback', choice);
+  btnRollback.disabled = false;
+  btnRollback.textContent = 'Rollback';
+  if (result.status === 'rolled_back') {
+    if (terminal) terminal.writeln('Rolled back to ' + choice + ', restarting...');
+    isRunning = false;
+    setStatus('starting', 'Rolling back...');
+    ipcRenderer.invoke('hermes:getVersion').then(ver => {
+      cfgVersion.textContent = ver.version + (ver.git ? ' (' + ver.git + ')' : '');
+    }).catch(() => {});
+    setTimeout(() => startHermes(), 1500);
+  } else {
+    if (terminal) terminal.writeln('\r\nRollback failed: ' + (result.message || 'Unknown error'));
+  }
 });
 
 settingsSave.addEventListener('click', async () => {
