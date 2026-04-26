@@ -138,7 +138,6 @@ ipcMain.handle('hermes:checkExe', async () => {
   const hermes = getHermesCommand();
   const fs = require('fs');
   if (hermes.cmd === 'python') {
-    // python is always available
     return { exists: true, path: hermes.cmd + ' ' + hermes.args.join(' ') };
   }
   try {
@@ -146,6 +145,61 @@ ipcMain.handle('hermes:checkExe', async () => {
     return { exists: true, path: hermes.cmd };
   } catch {
     return { exists: false, path: hermes.cmd };
+  }
+});
+
+// Model/Provider switching
+const PROVIDERS = {
+  longcat: { provider: 'custom', model: 'LongCat-Flash-Thinking-2601', base_url: 'https://api.longcat.chat/openai/v1', key_env: 'HF_TOKEN' },
+  openrouter: { provider: 'openrouter', model: 'anthropic/claude-sonnet-4', base_url: '', key_env: 'OPENROUTER_API_KEY' },
+  openai: { provider: 'openai', model: 'gpt-4o', base_url: '', key_env: 'OPENAI_API_KEY' },
+  anthropic: { provider: 'anthropic', model: 'claude-sonnet-4-20250514', base_url: '', key_env: 'ANTHROPIC_API_KEY' },
+  nous: { provider: 'nous', model: 'Hermes-3-Llama-3.1-70B', base_url: '', key_env: 'NOUS_API_KEY' },
+};
+
+ipcMain.handle('hermes:switchProvider', async (event, providerKey) => {
+  const provider = PROVIDERS[providerKey];
+  if (!provider) return { status: 'error', message: 'Unknown provider: ' + providerKey };
+
+  const fs = require('fs');
+  const configPath = path.join(os.homedir(), '.hermes', 'config.yaml');
+
+  try {
+    let config = fs.readFileSync(configPath, 'utf8');
+
+    // Update model section in YAML
+    config = config.replace(
+      /model:\s*\n\s*default:.*\n\s*provider:.*\n(\s*base_url:.*\n)?/,
+      `model:\n  default: ${provider.model}\n  provider: ${provider.provider}\n${provider.base_url ? '  base_url: ' + provider.base_url + '\n' : ''}`
+    );
+
+    fs.writeFileSync(configPath, config, 'utf8');
+
+    // Restart Hermes with new config
+    if (ptyProcess) {
+      ptyProcess.kill();
+      ptyProcess = null;
+    }
+
+    return { status: 'switched', provider: providerKey, model: provider.model };
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  }
+});
+
+ipcMain.handle('hermes:getCurrentProvider', async () => {
+  const fs = require('fs');
+  const configPath = path.join(os.homedir(), '.hermes', 'config.yaml');
+  try {
+    const config = fs.readFileSync(configPath, 'utf8');
+    const modelMatch = config.match(/default:\s*(.+)/);
+    const providerMatch = config.match(/provider:\s*(.+)/);
+    return {
+      model: modelMatch ? modelMatch[1].trim() : 'unknown',
+      provider: providerMatch ? providerMatch[1].trim() : 'unknown',
+    };
+  } catch {
+    return { model: 'unknown', provider: 'unknown' };
   }
 });
 
