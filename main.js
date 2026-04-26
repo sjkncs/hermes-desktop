@@ -7,11 +7,12 @@ let mainWindow;
 let ptyProcess = null;
 const isDev = !app.isPackaged;
 let hermesAgent = 'super-agent';
+const PYTHON = 'C:\\Users\\Administrator\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe';
 
 function getHermesCommand() {
   if (isDev) {
     return {
-      cmd: 'C:\\Users\\Administrator\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe',
+      cmd: PYTHON,
       args: ['-m', 'hermes_cli.main', 'chat', '-s', hermesAgent],
       cwd: path.join(__dirname, '..', 'hermes-agent'),
     };
@@ -264,19 +265,18 @@ ipcMain.handle('hermes:getCurrentProvider', async () => {
 });
 
 // --- Hermes Version / Update / Rollback ---
+const HERMES_DIR_SRC = path.join(__dirname, '..', 'hermes-agent');
+
 ipcMain.handle('hermes:getVersion', async () => {
   const { execSync } = require('child_process');
-  const fs = require('fs');
-  const hermesDir = path.join(__dirname, '..', 'hermes-agent');
   try {
-    const ver = execSync(`"${process.execPath}" -c "import sys; sys.path.insert(0, r'${hermesDir}'); from hermes_cli.main import __version__; print(__version__)"`, {
-      encoding: 'utf8', timeout: 10000,
-    }).trim();
-    // Also get git describe
+    const ver = execSync(`"${PYTHON}" -m hermes_cli.main --version`, {
+      encoding: 'utf8', timeout: 10000, cwd: HERMES_DIR_SRC,
+    }).trim().split('\n')[0];
     let gitVer = '';
     try {
       gitVer = execSync('git describe --tags --always', {
-        encoding: 'utf8', timeout: 5000, cwd: hermesDir,
+        encoding: 'utf8', timeout: 5000, cwd: HERMES_DIR_SRC,
       }).trim();
     } catch {}
     return { version: ver, git: gitVer };
@@ -287,10 +287,15 @@ ipcMain.handle('hermes:getVersion', async () => {
 
 ipcMain.handle('hermes:getTags', async () => {
   const { execSync } = require('child_process');
-  const hermesDir = path.join(__dirname, '..', 'hermes-agent');
   try {
+    // Fetch tags first to ensure they're up to date
+    try {
+      execSync('git fetch --tags', {
+        encoding: 'utf8', timeout: 30000, cwd: HERMES_DIR_SRC,
+      });
+    } catch {}
     const tags = execSync('git tag -l "v*" --sort=-v:refname', {
-      encoding: 'utf8', timeout: 5000, cwd: hermesDir,
+      encoding: 'utf8', timeout: 5000, cwd: HERMES_DIR_SRC,
     }).trim().split('\n').filter(Boolean);
     return { tags };
   } catch {
@@ -300,17 +305,21 @@ ipcMain.handle('hermes:getTags', async () => {
 
 ipcMain.handle('hermes:update', async () => {
   const { execSync } = require('child_process');
-  const hermesDir = path.join(__dirname, '..', 'hermes-agent');
-  const python = 'C:\\Users\\Administrator\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe';
   try {
-    // Kill running process first
     if (ptyProcess) { ptyProcess.kill(); ptyProcess = null; }
 
+    // Ensure we're on main branch first (in case we were on a detached HEAD from rollback)
+    try {
+      execSync('git checkout main', {
+        encoding: 'utf8', timeout: 10000, cwd: HERMES_DIR_SRC,
+      });
+    } catch {}
+
     execSync('git pull origin main', {
-      encoding: 'utf8', timeout: 60000, cwd: hermesDir,
+      encoding: 'utf8', timeout: 60000, cwd: HERMES_DIR_SRC,
     });
-    execSync(`"${python}" -m pip install -e . --quiet`, {
-      encoding: 'utf8', timeout: 120000, cwd: hermesDir,
+    execSync(`"${PYTHON}" -m pip install -e . --quiet`, {
+      encoding: 'utf8', timeout: 120000, cwd: HERMES_DIR_SRC,
     });
 
     return { status: 'updated' };
@@ -321,16 +330,14 @@ ipcMain.handle('hermes:update', async () => {
 
 ipcMain.handle('hermes:rollback', async (event, tag) => {
   const { execSync } = require('child_process');
-  const hermesDir = path.join(__dirname, '..', 'hermes-agent');
-  const python = 'C:\\Users\\Administrator\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe';
   try {
     if (ptyProcess) { ptyProcess.kill(); ptyProcess = null; }
 
     execSync(`git checkout ${tag}`, {
-      encoding: 'utf8', timeout: 30000, cwd: hermesDir,
+      encoding: 'utf8', timeout: 30000, cwd: HERMES_DIR_SRC,
     });
-    execSync(`"${python}" -m pip install -e . --quiet`, {
-      encoding: 'utf8', timeout: 120000, cwd: hermesDir,
+    execSync(`"${PYTHON}" -m pip install -e . --quiet`, {
+      encoding: 'utf8', timeout: 120000, cwd: HERMES_DIR_SRC,
     });
 
     return { status: 'rolled_back', tag };
