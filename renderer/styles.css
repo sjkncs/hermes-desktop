@@ -292,6 +292,25 @@ html, body {
   color: #dc2626;
 }
 
+.update-badge {
+  background: #ef4444;
+  color: white;
+  font-size: 10px;
+  font-weight: bold;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  animation: pulse 2s infinite;
+}
+
+.update-badge.hidden {
+  display: none;
+}
+
 #status-indicator {
   width: 8px;
   height: 8px;
