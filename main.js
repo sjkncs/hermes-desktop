@@ -11,7 +11,7 @@ function getHermesCommand() {
   if (isDev) {
     return {
       cmd: 'C:\\Users\\Administrator\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe',
-      args: ['-m', 'hermes_cli.main', 'chat', '-s', 'super-agent'],
+      args: ['-m', 'hermes_cli.main', 'chat', '-s', global.__hermesAgent || 'super-agent'],
       cwd: path.join(__dirname, '..', 'hermes-agent'),
     };
   }
@@ -148,40 +148,72 @@ ipcMain.handle('hermes:checkExe', async () => {
   }
 });
 
-// Model/Provider switching
-const PROVIDERS = {
-  longcat: { provider: 'custom', model: 'LongCat-Flash-Thinking-2601', base_url: 'https://api.longcat.chat/openai/v1', key_env: 'HF_TOKEN' },
-  openrouter: { provider: 'openrouter', model: 'anthropic/claude-sonnet-4', base_url: '', key_env: 'OPENROUTER_API_KEY' },
-  openai: { provider: 'openai', model: 'gpt-4o', base_url: '', key_env: 'OPENAI_API_KEY' },
-  anthropic: { provider: 'anthropic', model: 'claude-sonnet-4-20250514', base_url: '', key_env: 'ANTHROPIC_API_KEY' },
-  nous: { provider: 'nous', model: 'Hermes-3-Llama-3.1-70B', base_url: '', key_env: 'NOUS_API_KEY' },
-};
+// Model/Provider config — reads and writes ~/.hermes/config.yaml + .env
+const HERMES_DIR = path.join(os.homedir(), '.hermes');
+const CONFIG_PATH = path.join(HERMES_DIR, 'config.yaml');
+const ENV_PATH = path.join(HERMES_DIR, '.env');
 
-ipcMain.handle('hermes:switchProvider', async (event, providerKey) => {
-  const provider = PROVIDERS[providerKey];
-  if (!provider) return { status: 'error', message: 'Unknown provider: ' + providerKey };
-
+ipcMain.handle('hermes:saveConfig', async (event, cfg) => {
   const fs = require('fs');
-  const configPath = path.join(os.homedir(), '.hermes', 'config.yaml');
-
   try {
-    let config = fs.readFileSync(configPath, 'utf8');
+    // --- Update config.yaml ---
+    let yaml = fs.readFileSync(CONFIG_PATH, 'utf8');
 
-    // Update model section in YAML
-    config = config.replace(
-      /model:\s*\n\s*default:.*\n\s*provider:.*\n(\s*base_url:.*\n)?/,
-      `model:\n  default: ${provider.model}\n  provider: ${provider.provider}\n${provider.base_url ? '  base_url: ' + provider.base_url + '\n' : ''}`
+    // Update model section: default, provider, base_url
+    yaml = yaml.replace(
+      /model:\s*\n(\s*default:.*\n)(\s*provider:.*\n)(\s*base_url:.*\n)?/,
+      `model:\n  default: ${cfg.model}\n  provider: ${cfg.provider}\n${cfg.base_url ? '  base_url: ' + cfg.base_url + '\n' : ''}`
     );
 
-    fs.writeFileSync(configPath, config, 'utf8');
+    // If base_url line doesn't exist yet (first replacement didn't match), add it
+    if (cfg.base_url && !yaml.match(/\s*base_url:/)) {
+      yaml = yaml.replace(
+        /model:\s*\n(\s*default:.*\n)(\s*provider:.*\n)/,
+        `$1$2  base_url: ${cfg.base_url}\n`
+      );
+    }
 
-    // Restart Hermes with new config
+    fs.writeFileSync(CONFIG_PATH, yaml, 'utf8');
+
+    // --- Update .env with API key ---
+    if (cfg.api_key) {
+      let envContent = '';
+      try { envContent = fs.readFileSync(ENV_PATH, 'utf8'); } catch {}
+
+      // Determine env var name based on provider
+      const keyEnvMap = {
+        custom: 'CUSTOM_API_KEY',
+        openai: 'OPENAI_API_KEY',
+        anthropic: 'ANTHROPIC_API_KEY',
+        openrouter: 'OPENROUTER_API_KEY',
+        nous: 'NOUS_API_KEY',
+      };
+      const keyName = keyEnvMap[cfg.provider] || 'CUSTOM_API_KEY';
+
+      // Replace or append the key
+      const keyRegex = new RegExp(`^${keyName}=.*$`, 'm');
+      if (keyRegex.test(envContent)) {
+        envContent = envContent.replace(keyRegex, `${keyName}=${cfg.api_key}`);
+      } else {
+        envContent = envContent.trimEnd() + `\n${keyName}=${cfg.api_key}\n`;
+      }
+
+      fs.writeFileSync(ENV_PATH, envContent, 'utf8');
+    }
+
+    // --- Update agent skill in Hermes args ---
+    if (cfg.agent) {
+      // We'll use this in getHermesCommand dynamically
+      global.__hermesAgent = cfg.agent;
+    }
+
+    // Kill current process so it restarts with new config
     if (ptyProcess) {
       ptyProcess.kill();
       ptyProcess = null;
     }
 
-    return { status: 'switched', provider: providerKey, model: provider.model };
+    return { status: 'saved' };
   } catch (err) {
     return { status: 'error', message: err.message };
   }
@@ -189,17 +221,38 @@ ipcMain.handle('hermes:switchProvider', async (event, providerKey) => {
 
 ipcMain.handle('hermes:getCurrentProvider', async () => {
   const fs = require('fs');
-  const configPath = path.join(os.homedir(), '.hermes', 'config.yaml');
   try {
-    const config = fs.readFileSync(configPath, 'utf8');
-    const modelMatch = config.match(/default:\s*(.+)/);
-    const providerMatch = config.match(/provider:\s*(.+)/);
+    const yaml = fs.readFileSync(CONFIG_PATH, 'utf8');
+    const modelMatch = yaml.match(/default:\s*(.+)/);
+    const providerMatch = yaml.match(/provider:\s*(.+)/);
+    const baseUrlMatch = yaml.match(/base_url:\s*(.+)/);
+
+    // Try to read API key from .env
+    let apiKey = '';
+    try {
+      const envContent = fs.readFileSync(ENV_PATH, 'utf8');
+      const keyEnvMap = {
+        custom: 'CUSTOM_API_KEY',
+        openai: 'OPENAI_API_KEY',
+        anthropic: 'ANTHROPIC_API_KEY',
+        openrouter: 'OPENROUTER_API_KEY',
+        nous: 'NOUS_API_KEY',
+      };
+      const provider = providerMatch ? providerMatch[1].trim() : 'custom';
+      const keyName = keyEnvMap[provider] || 'CUSTOM_API_KEY';
+      const keyMatch = envContent.match(new RegExp(`^${keyName}=(.+)$`, 'm'));
+      if (keyMatch) apiKey = keyMatch[1].trim();
+    } catch {}
+
     return {
-      model: modelMatch ? modelMatch[1].trim() : 'unknown',
-      provider: providerMatch ? providerMatch[1].trim() : 'unknown',
+      model: modelMatch ? modelMatch[1].trim() : '',
+      provider: providerMatch ? providerMatch[1].trim() : 'custom',
+      base_url: baseUrlMatch ? baseUrlMatch[1].trim() : '',
+      api_key: apiKey,
+      agent: global.__hermesAgent || 'super-agent',
     };
   } catch {
-    return { model: 'unknown', provider: 'unknown' };
+    return { model: '', provider: 'custom', base_url: '', api_key: '', agent: 'super-agent' };
   }
 });
 
