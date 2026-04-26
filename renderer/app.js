@@ -172,7 +172,9 @@ function openSettings() {
     cfgProvider.value = current.provider || 'custom';
     cfgModel.value = current.model || '';
     cfgBaseurl.value = current.base_url || '';
-    cfgApikey.value = current.api_key || '';
+    // Don't overwrite api_key input with masked value — show placeholder if key exists
+    cfgApikey.value = '';
+    cfgApikey.placeholder = current.api_key ? 'Current: ' + current.api_key + ' (leave empty to keep)' : 'sk-...';
     cfgAgent.value = current.agent || 'super-agent';
   }).catch(() => {});
 }
@@ -255,8 +257,11 @@ ipcRenderer.on('hermes:stdout', (_event, data) => {
 
 ipcRenderer.on('hermes:exit', (_event, code) => {
   isRunning = false;
-  if (terminal) terminal.writeln('\r\nProcess exited with code ' + code);
-  setStatus('offline', 'Exited (' + code + ')');
+  // Don't override status if we're in the middle of switching providers
+  if (statusText.textContent !== 'Switching...') {
+    if (terminal) terminal.writeln('\r\nProcess exited with code ' + code);
+    setStatus('offline', 'Exited (' + code + ')');
+  }
 });
 
 ipcRenderer.on('hermes:error', (_event, msg) => {
