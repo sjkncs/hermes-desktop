@@ -341,15 +341,46 @@ function copyDirRecursive(src, dest) {
   }
 }
 
-// Helper: download and extract repo via gh api
-function ghDownloadAndExtract(ref) {
+// Helper: download and extract repo via gh api (async)
+async function ghDownloadAndExtract(ref) {
   const { execSync } = require('child_process');
   const fs = require('fs');
+  const https = require('https');
   const tarPath = path.join(os.tmpdir(), `hermes-agent-${ref}.tar.gz`);
   const tmpDir = path.join(os.tmpdir(), `hermes-update-${Date.now()}`);
 
-  // Download tarball via gh
-  runGh(`api /repos/${HERMES_REPO}/tarball/${ref} > "${tarPath}"`, { timeout: 120000 });
+  // Get gh token
+  const token = execSync('gh auth token', { encoding: 'utf8', timeout: 10000 }).trim();
+  const url = `https://api.github.com/repos/${HERMES_REPO}/tarball/${ref}`;
+
+  // Download tarball via Node.js https (avoids cmd.exe timeout)
+  const download = (followUrl) => new Promise((resolve, reject) => {
+    const req = https.get(followUrl, {
+      headers: {
+        'User-Agent': 'hermes-desktop',
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github+json',
+      },
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        download(res.headers.location).then(resolve).catch(reject);
+        return;
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        reject(new Error(`HTTP ${res.statusCode}`));
+        return;
+      }
+      const file = fs.createWriteStream(tarPath);
+      res.pipe(file);
+      file.on('finish', () => { file.close(); resolve(); });
+      file.on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(120000, () => { req.destroy(new Error('Download timeout')); });
+  });
+
+  await download(url);
 
   // Extract
   fs.mkdirSync(tmpDir, { recursive: true });
@@ -382,7 +413,7 @@ ipcMain.handle('hermes:update', async () => {
       runGit('pull origin main', { timeout: 60000 });
     } catch {
       // git pull failed (network issue) — use gh api to download tarball
-      ghDownloadAndExtract('main');
+      await ghDownloadAndExtract('main');
     }
 
     execSync(`"${PYTHON}" -m pip install -e . --quiet`, {
@@ -405,7 +436,7 @@ ipcMain.handle('hermes:rollback', async (event, tag) => {
       runGit(`checkout ${tag}`, { timeout: 30000 });
     } catch {
       // Tag not found locally or network issue — download from gh
-      ghDownloadAndExtract(tag);
+      await ghDownloadAndExtract(tag);
     }
 
     execSync(`"${PYTHON}" -m pip install -e . --quiet`, {
