@@ -10,6 +10,42 @@ let hermesAgent = 'super-agent';
 let hermesWorkspace = ''; // configurable workspace directory
 let hermesResume = '';   // session ID or name to resume
 const PYTHON = 'C:\\Users\\Administrator\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe';
+const HERMES_DIR_SRC = path.join(__dirname, '..', 'hermes-agent');
+const HERMES_REPO = 'NousResearch/hermes-agent';
+
+function runGit(args, opts = {}) {
+  const { execSync } = require('child_process');
+  return execSync(`git ${args}`, {
+    encoding: 'utf8',
+    timeout: opts.timeout || 30000,
+    cwd: HERMES_DIR_SRC,
+    env: { ...process.env, GH_TOKEN: undefined },
+  });
+}
+
+function runGitAsync(args, opts = {}) {
+  const { exec } = require('child_process');
+  return new Promise((resolve, reject) => {
+    exec(`git ${args}`, {
+      encoding: 'utf8',
+      timeout: opts.timeout || 30000,
+      cwd: HERMES_DIR_SRC,
+      env: { ...process.env, GH_TOKEN: undefined },
+    }, (err, stdout, stderr) => {
+      if (err) reject(err);
+      else resolve(stdout);
+    });
+  });
+}
+
+function runGh(args, opts = {}) {
+  const { execSync } = require('child_process');
+  return execSync(`gh ${args}`, {
+    encoding: 'utf8',
+    timeout: opts.timeout || 30000,
+    cwd: HERMES_DIR_SRC,
+  });
+}
 
 function safeKillPty() {
   if (ptyProcess) {
@@ -77,7 +113,9 @@ function createWindow() {
 
 ipcMain.handle('hermes:start', async (event, args) => {
   if (ptyProcess) {
-    return { status: 'already_running' };
+    // Kill existing process to avoid orphan processes
+    safeKillPty();
+    await new Promise(r => setTimeout(r, 300));
   }
 
   const hermes = getHermesCommand();
@@ -166,24 +204,26 @@ ipcMain.handle('dialog:browseFolder', async () => {
 
 // --- Auto Check for Updates ---
 ipcMain.handle('hermes:checkForUpdates', async () => {
-  const { execSync } = require('child_process');
   try {
-    const localVer = execSync(`"${PYTHON}" -m hermes_cli.main --version`, {
-      encoding: 'utf8', timeout: 10000, cwd: HERMES_DIR_SRC,
-    }).trim().split('\n')[0];
+    const localVer = await new Promise((resolve, reject) => {
+      const { exec } = require('child_process');
+      exec(`"${PYTHON}" -m hermes_cli.main --version`, {
+        encoding: 'utf8', timeout: 10000, cwd: HERMES_DIR_SRC,
+      }, (err, stdout) => err ? reject(err) : resolve(stdout.trim().split('\n')[0]));
+    });
 
-    const latestTag = execSync(
-      `gh api /repos/${HERMES_REPO}/releases/latest --jq ".tag_name"`,
-      { encoding: 'utf8', timeout: 15000 }
-    ).trim();
+    const latestTag = await new Promise((resolve, reject) => {
+      const { exec } = require('child_process');
+      exec(`gh api /repos/${HERMES_REPO}/releases/latest --jq ".tag_name"`, {
+        encoding: 'utf8', timeout: 15000,
+      }, (err, stdout) => err ? reject(err) : resolve(stdout.trim()));
+    });
 
     if (!latestTag) return { hasUpdate: false, current: localVer, latest: '' };
 
     let currentTag = '';
     try {
-      currentTag = execSync('git describe --tags --abbrev=0', {
-        encoding: 'utf8', timeout: 5000, cwd: HERMES_DIR_SRC,
-      }).trim();
+      currentTag = (await runGitAsync('describe --tags --abbrev=0', { timeout: 5000 })).trim();
     } catch {}
 
     return { hasUpdate: latestTag !== currentTag, current: localVer, latest: latestTag, currentTag };
@@ -351,7 +391,7 @@ ipcMain.handle('hermes:saveConfig', async (event, cfg) => {
       yaml = yaml.replace(/api_max_retries:\s*\d+/, `api_max_retries: ${cfg.api_max_retries}`);
     }
     if (cfg.term_timeout) {
-      yaml = yaml.replace(/(terminal:\s*\n(?:\s.*\n)*?\s*)timeout:\s*\d+/, `$1timeout: ${cfg.term_timeout}`);
+      yaml = yaml.replace(/(terminal:[\s\S]*?)timeout:\s*\d+/, `$1timeout: ${cfg.term_timeout}`);
     }
     // Re-write yaml with updated slider values
     fs.writeFileSync(CONFIG_PATH, yaml, 'utf8');
@@ -406,7 +446,7 @@ ipcMain.handle('hermes:getCurrentProvider', async () => {
       max_turns: parseInt(yaml.match(/max_turns:\s*(\d+)/)?.[1]) || 90,
       gateway_timeout: parseInt(yaml.match(/gateway_timeout:\s*(\d+)/)?.[1]) || 1800,
       api_max_retries: parseInt(yaml.match(/api_max_retries:\s*(\d+)/)?.[1]) ?? 3,
-      term_timeout: parseInt(yaml.match(/\s+timeout:\s*(\d+)/)?.[1]) || 180,
+      term_timeout: parseInt(yaml.match(/terminal:[\s\S]*?timeout:\s*(\d+)/)?.[1]) || 180,
     };
   } catch {
     return { model: '', provider: 'custom', base_url: '', api_key: '', agent: hermesAgent, workspace: '', resume: '', max_turns: 90, gateway_timeout: 1800, api_max_retries: 3, term_timeout: 180 };
@@ -414,33 +454,12 @@ ipcMain.handle('hermes:getCurrentProvider', async () => {
 });
 
 // --- Hermes Version / Update / Rollback ---
-const HERMES_DIR_SRC = path.join(__dirname, '..', 'hermes-agent');
-const HERMES_REPO = 'NousResearch/hermes-agent';
-
-function runGit(args, opts = {}) {
-  const { execSync } = require('child_process');
-  return execSync(`git ${args}`, {
-    encoding: 'utf8',
-    timeout: opts.timeout || 30000,
-    cwd: HERMES_DIR_SRC,
-    env: { ...process.env, GH_TOKEN: undefined }, // avoid gh token leaking to git
-  });
-}
-
-function runGh(args, opts = {}) {
-  const { execSync } = require('child_process');
-  return execSync(`gh ${args}`, {
-    encoding: 'utf8',
-    timeout: opts.timeout || 30000,
-    cwd: HERMES_DIR_SRC,
-  });
-}
 
 ipcMain.handle('hermes:getVersion', async () => {
   const { execSync } = require('child_process');
   try {
     const ver = execSync(`"${PYTHON}" -m hermes_cli.main --version`, {
-      encoding: 'utf8', timeout: 10000, cwd: HERMES_DIR_SRC,
+      encoding: 'utf8', timeout: 10000, cwd: path.join(__dirname, '..', 'hermes-agent'),
     }).trim().split('\n')[0];
     let gitVer = '';
     try {
@@ -606,14 +625,14 @@ ipcMain.handle('hermes:update', async () => {
     // Ensure we're on main branch first
     try {
       sendProgress('Checking out main branch...');
-      runGit('checkout main', { timeout: 10000 });
+      await runGitAsync('checkout main', { timeout: 10000 });
     } catch {}
 
     // Try git pull, fall back to gh-based download if network fails
     let pulled = false;
     try {
       sendProgress('Pulling latest code (git pull)...');
-      runGit('pull origin main', { timeout: 60000 });
+      await runGitAsync('pull origin main', { timeout: 60000 });
       pulled = true;
     } catch {
       sendProgress('git pull failed, downloading via GitHub API...');
@@ -624,9 +643,11 @@ ipcMain.handle('hermes:update', async () => {
     }
 
     sendProgress('Installing updated package (pip install)...');
-    const { execSync } = require('child_process');
-    execSync(`"${PYTHON}" -m pip install -e .`, {
-      encoding: 'utf8', timeout: 120000, cwd: HERMES_DIR_SRC,
+    await new Promise((resolve, reject) => {
+      const { exec } = require('child_process');
+      exec(`"${PYTHON}" -m pip install -e .`, {
+        encoding: 'utf8', timeout: 120000, cwd: HERMES_DIR_SRC,
+      }, (err) => err ? reject(err) : resolve());
     });
 
     sendProgress('Update complete!');
@@ -645,7 +666,7 @@ ipcMain.handle('hermes:rollback', async (event, tag) => {
     // Try local git checkout first
     let checkedOut = false;
     try {
-      runGit(`checkout ${tag}`, { timeout: 30000 });
+      await runGitAsync(`checkout ${tag}`, { timeout: 30000 });
       checkedOut = true;
     } catch {}
 
@@ -655,9 +676,11 @@ ipcMain.handle('hermes:rollback', async (event, tag) => {
     }
 
     sendProgress('Installing version ' + tag + ' (pip install)...');
-    const { execSync } = require('child_process');
-    execSync(`"${PYTHON}" -m pip install -e .`, {
-      encoding: 'utf8', timeout: 120000, cwd: HERMES_DIR_SRC,
+    await new Promise((resolve, reject) => {
+      const { exec } = require('child_process');
+      exec(`"${PYTHON}" -m pip install -e .`, {
+        encoding: 'utf8', timeout: 120000, cwd: HERMES_DIR_SRC,
+      }, (err) => err ? reject(err) : resolve());
     });
 
     sendProgress('Rollback to ' + tag + ' complete!');
