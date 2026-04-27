@@ -76,6 +76,57 @@ function initTerminal() {
     convertEol: true,
   });
 
+  // --- Windows Shortcuts ---
+  // Ctrl+C: copy selection (if any), else send SIGINT to process
+  // Ctrl+V: paste from clipboard
+  // Ctrl+Z: send undo to process
+  // Ctrl+A: select all
+  // Ctrl+Shift+C: always copy
+  // Ctrl+Shift+V: always paste
+  terminal.attachCustomKeyEventHandler((event) => {
+    if (event.type !== 'keydown') return false;
+    const ctrl = event.ctrlKey && !event.altKey && !event.metaKey;
+    const ctrlShift = event.ctrlKey && event.shiftKey && !event.altKey;
+
+    // Ctrl+Shift+C: always copy
+    if (ctrlShift && event.key === 'C') {
+      const sel = terminal.getSelection();
+      if (sel) { navigator.clipboard.writeText(sel); }
+      return false; // prevent default
+    }
+    // Ctrl+Shift+V: always paste
+    if (ctrlShift && event.key === 'V') {
+      navigator.clipboard.readText().then(text => {
+        if (text && isRunning) ipcRenderer.invoke('hermes:input', text);
+      }).catch(() => {});
+      return false;
+    }
+    // Ctrl+C: copy if selection exists, else pass through to process
+    if (ctrl && !event.shiftKey && event.key === 'c') {
+      const sel = terminal.getSelection();
+      if (sel) { navigator.clipboard.writeText(sel); return false; }
+      // No selection: let it pass through as SIGINT
+      return true;
+    }
+    // Ctrl+V: paste from clipboard
+    if (ctrl && !event.shiftKey && event.key === 'v') {
+      navigator.clipboard.readText().then(text => {
+        if (text && isRunning) ipcRenderer.invoke('hermes:input', text);
+      }).catch(() => {});
+      return false;
+    }
+    // Ctrl+Z: pass through to process (undo in shell)
+    if (ctrl && !event.shiftKey && event.key === 'z') {
+      return true;
+    }
+    // Ctrl+A: select all in terminal
+    if (ctrl && !event.shiftKey && event.key === 'a') {
+      terminal.selectAll();
+      return false;
+    }
+    return true;
+  });
+
   fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(new WebLinksAddon());
