@@ -192,6 +192,24 @@ ipcMain.handle('hermes:checkForUpdates', async () => {
   }
 });
 
+ipcMain.handle('hermes:checkExe', async () => {
+  const hermes = getHermesCommand();
+  const fs = require('fs');
+  // In dev mode, check if python executable exists
+  try {
+    await fs.promises.access(hermes.cmd, fs.constants.R_OK);
+    return { exists: true, path: hermes.cmd + ' ' + hermes.args.join(' ') };
+  } catch {
+    return { exists: false, path: hermes.cmd };
+  }
+});
+
+// Model/Provider config — reads and writes ~/.hermes/config.yaml + .env
+const HERMES_DIR = path.join(os.homedir(), '.hermes');
+const CONFIG_PATH = path.join(HERMES_DIR, 'config.yaml');
+const ENV_PATH = path.join(HERMES_DIR, '.env');
+const SESSIONS_DIR = path.join(HERMES_DIR, 'sessions');
+
 // --- Session History ---
 ipcMain.handle('hermes:listSessions', async () => {
   const fs = require('fs');
@@ -242,35 +260,16 @@ ipcMain.handle('hermes:deleteSession', async (event, id) => {
 ipcMain.handle('hermes:getLastSession', async () => {
   const fs = require('fs');
   try {
-    const sessionsDir = path.join(HERMES_DIR, 'sessions');
-    if (!fs.existsSync(sessionsDir)) return '';
-    const files = fs.readdirSync(sessionsDir)
+    if (!fs.existsSync(SESSIONS_DIR)) return '';
+    const files = fs.readdirSync(SESSIONS_DIR)
       .filter(f => f.endsWith('.json'))
-      .map(f => ({ name: f.replace('.json', ''), mtime: fs.statSync(path.join(sessionsDir, f)).mtime }))
+      .map(f => ({ name: f.replace('.json', ''), mtime: fs.statSync(path.join(SESSIONS_DIR, f)).mtime }))
       .sort((a, b) => b.mtime - a.mtime);
     return files.length ? files[0].name : '';
   } catch {
     return '';
   }
 });
-
-ipcMain.handle('hermes:checkExe', async () => {
-  const hermes = getHermesCommand();
-  const fs = require('fs');
-  // In dev mode, check if python executable exists
-  try {
-    await fs.promises.access(hermes.cmd, fs.constants.R_OK);
-    return { exists: true, path: hermes.cmd + ' ' + hermes.args.join(' ') };
-  } catch {
-    return { exists: false, path: hermes.cmd };
-  }
-});
-
-// Model/Provider config — reads and writes ~/.hermes/config.yaml + .env
-const HERMES_DIR = path.join(os.homedir(), '.hermes');
-const CONFIG_PATH = path.join(HERMES_DIR, 'config.yaml');
-const ENV_PATH = path.join(HERMES_DIR, '.env');
-const SESSIONS_DIR = path.join(HERMES_DIR, 'sessions');
 
 ipcMain.handle('hermes:saveConfig', async (event, cfg) => {
   const fs = require('fs');
