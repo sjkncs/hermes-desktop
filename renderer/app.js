@@ -90,6 +90,13 @@ function initTerminal() {
   terminal.onData((data) => {
     if (isRunning) {
       ipcRenderer.invoke('hermes:input', data);
+      // Capture first input line as session name
+      if (!sessionFirstInput && data.trim() && data.includes('\r')) {
+        const line = data.replace(/\r|\n/g, '').trim();
+        if (line && !line.startsWith('\x1b') && line.length > 2) {
+          sessionFirstInput = line.slice(0, 60);
+        }
+      }
     }
   });
 
@@ -142,6 +149,7 @@ const sidebarList = document.getElementById('sidebar-list');
 // Current session tracking
 let currentSessionId = null;
 let sessionOutputBuffer = [];
+let sessionFirstInput = ''; // first user input becomes session name
 
 // Slider value display
 cfgMaxTurns.addEventListener('input', () => valMaxTurns.textContent = cfgMaxTurns.value);
@@ -167,6 +175,7 @@ async function startHermes() {
   // Create new session ID
   currentSessionId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
   sessionOutputBuffer = [];
+  sessionFirstInput = '';
 
   try {
     const result = await ipcRenderer.invoke('hermes:start', []);
@@ -433,7 +442,7 @@ async function saveCurrentSession() {
   const preview = sessionOutputBuffer.slice(-5).join('').replace(/\x1b\[[0-9;]*m/g, '').trim().slice(0, 100);
   const session = {
     id: currentSessionId,
-    name: currentSessionId.slice(0, 8) + ' ' + new Date().toLocaleDateString(),
+    name: sessionFirstInput || currentSessionId.slice(0, 8),
     date: new Date().toISOString(),
     preview,
     output: sessionOutputBuffer.join(''),
