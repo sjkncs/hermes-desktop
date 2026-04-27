@@ -552,6 +552,10 @@ ipcRenderer.on('hermes:stdout', (_event, data) => {
   // Buffer output for session history
   if (currentSessionId) {
     sessionOutputBuffer.push(data);
+    // Cap buffer at 5000 chunks (~2MB) to avoid memory issues
+    if (sessionOutputBuffer.length > 5000) {
+      sessionOutputBuffer = sessionOutputBuffer.slice(-3000);
+    }
     // Auto-save every ~50 chunks to avoid data loss
     if (sessionOutputBuffer.length % 50 === 0) {
       saveCurrentSession();
