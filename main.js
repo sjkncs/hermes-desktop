@@ -456,14 +456,16 @@ ipcMain.handle('hermes:getCurrentProvider', async () => {
 // --- Hermes Version / Update / Rollback ---
 
 ipcMain.handle('hermes:getVersion', async () => {
-  const { execSync } = require('child_process');
   try {
-    const ver = execSync(`"${PYTHON}" -m hermes_cli.main --version`, {
-      encoding: 'utf8', timeout: 10000, cwd: path.join(__dirname, '..', 'hermes-agent'),
-    }).trim().split('\n')[0];
+    const ver = await new Promise((resolve, reject) => {
+      const { exec } = require('child_process');
+      exec(`"${PYTHON}" -m hermes_cli.main --version`, {
+        encoding: 'utf8', timeout: 10000, cwd: HERMES_DIR_SRC,
+      }, (err, stdout) => err ? reject(err) : resolve(stdout.trim().split('\n')[0]));
+    });
     let gitVer = '';
     try {
-      gitVer = runGit('describe --tags --always', { timeout: 5000 }).trim();
+      gitVer = (await runGitAsync('describe --tags --always', { timeout: 5000 })).trim();
     } catch {}
     return { version: ver, git: gitVer };
   } catch (err) {
@@ -475,7 +477,7 @@ ipcMain.handle('hermes:getTags', async () => {
   try {
     // Try git fetch first, fall back to gh api for remote tags
     try {
-      runGit('fetch --tags', { timeout: 30000 });
+      await runGitAsync('fetch --tags', { timeout: 30000 });
     } catch {
       // Network failure — use gh api to list remote tags
       try {
@@ -486,7 +488,7 @@ ipcMain.handle('hermes:getTags', async () => {
         }
       } catch {}
     }
-    const tags = runGit('tag -l "v*" --sort=-v:refname', { timeout: 5000 }).trim().split('\n').filter(Boolean);
+    const tags = (await runGitAsync('tag -l "v*" --sort=-v:refname', { timeout: 5000 })).trim().split('\n').filter(Boolean);
     return { tags };
   } catch {
     return { tags: [] };
@@ -511,14 +513,16 @@ function copyDirRecursive(src, dest) {
 
 // Helper: download and extract repo via gh api (async)
 async function ghDownloadAndExtract(ref) {
-  const { execSync } = require('child_process');
   const fs = require('fs');
   const https = require('https');
   const zipPath = path.join(os.tmpdir(), `hermes-agent-${ref}.zip`);
   const tmpDir = path.join(os.tmpdir(), `hermes-update-${Date.now()}`);
 
   sendProgress('Getting GitHub auth token...');
-  const token = execSync('gh auth token', { encoding: 'utf8', timeout: 10000 }).trim();
+  const token = (await new Promise((resolve, reject) => {
+    const { exec } = require('child_process');
+    exec('gh auth token', { encoding: 'utf8', timeout: 10000 }, (err, stdout) => err ? reject(err) : resolve(stdout.trim()));
+  }));
   // Use zipball instead of tarball — PowerShell can extract zip natively
   const url = `https://api.github.com/repos/${HERMES_REPO}/zipball/${ref}`;
 
@@ -555,14 +559,17 @@ async function ghDownloadAndExtract(ref) {
   // Extract using PowerShell (handles Windows paths with spaces correctly)
   fs.mkdirSync(tmpDir, { recursive: true });
   try {
-    execSync(
-      `powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${tmpDir}' -Force"`,
-      { timeout: 120000 }
-    );
+    await new Promise((resolve, reject) => {
+      const { exec } = require('child_process');
+      exec(`powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${tmpDir}' -Force"`, { timeout: 120000 }, (err) => err ? reject(err) : resolve());
+    });
   } catch (e) {
     sendProgress('PowerShell extract failed, trying tar fallback...');
     try {
-      execSync(`tar -xzf "${zipPath}" -C "${tmpDir}"`, { timeout: 60000 });
+      await new Promise((resolve, reject) => {
+        const { exec } = require('child_process');
+        exec(`tar -xzf "${zipPath}" -C "${tmpDir}"`, { timeout: 60000 }, (err) => err ? reject(err) : resolve());
+      });
     } catch {
       throw new Error('Failed to extract downloaded archive');
     }
