@@ -192,6 +192,52 @@ ipcMain.handle('hermes:checkForUpdates', async () => {
   }
 });
 
+// --- Session History ---
+ipcMain.handle('hermes:listSessions', async () => {
+  const fs = require('fs');
+  try {
+    if (!fs.existsSync(SESSIONS_DIR)) return [];
+    return fs.readdirSync(SESSIONS_DIR)
+      .filter(f => f.endsWith('.json'))
+      .map(f => {
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(SESSIONS_DIR, f), 'utf8'));
+          return { id: data.id, name: data.name, date: data.date, preview: data.preview || '', model: data.model || '' };
+        } catch { return null; }
+      })
+      .filter(Boolean)
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+  } catch { return []; }
+});
+
+ipcMain.handle('hermes:saveSession', async (event, session) => {
+  const fs = require('fs');
+  try {
+    if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+    const filePath = path.join(SESSIONS_DIR, session.id + '.json');
+    fs.writeFileSync(filePath, JSON.stringify(session, null, 2), 'utf8');
+    return { status: 'saved' };
+  } catch (err) { return { status: 'error', message: err.message }; }
+});
+
+ipcMain.handle('hermes:loadSession', async (event, id) => {
+  const fs = require('fs');
+  try {
+    const filePath = path.join(SESSIONS_DIR, id + '.json');
+    if (!fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch { return null; }
+});
+
+ipcMain.handle('hermes:deleteSession', async (event, id) => {
+  const fs = require('fs');
+  try {
+    const filePath = path.join(SESSIONS_DIR, id + '.json');
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    return { status: 'deleted' };
+  } catch (err) { return { status: 'error', message: err.message }; }
+});
+
 // --- Get Last Session ID ---
 ipcMain.handle('hermes:getLastSession', async () => {
   const fs = require('fs');
@@ -224,6 +270,7 @@ ipcMain.handle('hermes:checkExe', async () => {
 const HERMES_DIR = path.join(os.homedir(), '.hermes');
 const CONFIG_PATH = path.join(HERMES_DIR, 'config.yaml');
 const ENV_PATH = path.join(HERMES_DIR, '.env');
+const SESSIONS_DIR = path.join(HERMES_DIR, 'sessions');
 
 ipcMain.handle('hermes:saveConfig', async (event, cfg) => {
   const fs = require('fs');
