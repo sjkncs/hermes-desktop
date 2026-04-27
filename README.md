@@ -1,83 +1,79 @@
-# 🏛️ Hermes Desktop
+# Hermes Desktop
 
-Electron desktop wrapper for **Hermes Agent** CLI — an AI assistant with tool-calling capabilities, powered by xterm.js terminal emulation.
+**Super Intelligent AI Agent Desktop App** — powered by [Hermes Agent](https://github.com/NousResearch/hermes-agent).
 
-## ✨ Features
+## Features
 
-- **Interactive Terminal** — Full PTY support via node-pty, enabling real-time interaction with Hermes Agent CLI
-- **xterm.js UI** — Modern terminal renderer with 256-color support, cursor styling, and link detection
-- **Light/Dark Themes** — Toggle between themes with persistent preference (localStorage)
-- **Smart Auto-Scroll** — Auto-scrolls to new output only when you're at the bottom; won't fight you when scrolling up
-- **Auto-Start** — Hermes Agent launches automatically on app startup
-- **Window Icon** — Custom Hermes Conrad (Futurama) icon
-- **External Links** — URLs open in default browser
+- **Agent Chat** — Interactive terminal with Hermes AI agent (super-agent skill)
+- **Session History** — Sidebar with saved sessions, auto-save on exit, resume any past session
+- **API Settings** — Configure provider (OpenAI/Anthropic/OpenRouter/Custom), model, API key
+- **Agent Parameters** — Sliders for Max Turns, Gateway Timeout, API Retries, Terminal Timeout
+- **Workspace Directory** — Configurable project directory for file/code operations
+- **Auto Update** — Checks GitHub releases every 30 min, red badge notification
+- **Update & Rollback** — One-click update (`git pull + pip install`) or rollback to any version tag
+- **Windows Shortcuts** — Ctrl+C copy, Ctrl+V paste, Ctrl+Z undo, Ctrl+A select all
+- **Dark/Light Theme** — Toggle with one click
 
-## 📦 Tech Stack
+## Quick Start
 
-| Component | Technology |
-|-----------|-----------|
-| Shell | Electron 33+ |
-| Terminal | xterm.js (@xterm/xterm) |
-| PTY | node-pty (ConPTY / WinPTY) |
-| Fit | @xterm/addon-fit |
-| Links | @xterm/addon-web-links |
-| IPC | Electron ipcMain/ipcRenderer |
-
-## 🚀 Setup
+### Dev Mode (requires Python + Node.js)
 
 ```bash
-# Install dependencies
+git clone https://github.com/sjkncs/hermes-desktop.git
+cd hermes-desktop
 npm install
-
-# Run in development mode
-npx electron .
-
-# Build for distribution
-npx electron-builder
+npm start
 ```
 
-## ⚙️ Configuration
+Prerequisites:
+- [Git for Windows](https://git-scm.com/download/win) (required on Windows for shell commands)
+- Python 3.11+ with `hermes-agent` installed (`pip install -e .`)
+- Node.js 18+
 
-The app connects to Hermes Agent via:
-- **Dev mode**: `python -m hermes_cli.main chat -s super-agent` (from parent `hermes-agent` directory)
-- **Production**: Bundled `Hermes.exe` from `resources/hermes/`
+### Build EXE
 
-Environment variables set for the PTY process:
-- `FORCE_COLOR=1` — Enable colored output
-- `PYTHONUTF8=1` — Force UTF-8 encoding on Windows
-- `PYTHONUNBUFFERED=1` — Disable output buffering
-- `TERM=xterm-256color` — 256-color terminal support
+```bash
+npm run build
+```
 
-## 📁 Project Structure
+Output: `dist/Hermes-Desktop.exe` (portable, no installer needed)
+
+## Configuration
+
+All settings are stored in `~/.hermes/`:
+
+| File | Purpose |
+|------|---------|
+| `config.yaml` | Model, provider, agent parameters, terminal settings |
+| `.env` | API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.) |
+| `sessions/` | Saved session history (JSON) |
+
+## Architecture
 
 ```
 hermes-desktop/
-├── main.js              # Electron main process (PTY spawn, IPC handlers)
-├── preload.js           # Preload script (empty — using nodeIntegration)
-├── package.json         # Dependencies & Electron config
+├── main.js          # Electron main process (IPC, PTY, update/rollback)
+├── preload.js       # Preload script
+├── renderer/
+│   ├── index.html   # UI layout (titlebar, sidebar, terminal, settings modal)
+│   ├── app.js       # Renderer logic (terminal, sidebar, shortcuts, session history)
+│   └── styles.css   # Styling (light/dark themes, modal, sidebar, sliders)
 ├── assets/
-│   ├── icon.png         # App icon (256x256)
-│   ├── icon.ico         # Windows icon
-│   ├── icon.svg         # Source SVG (Hermes Conrad)
-│   └── icon-{16,32,48}.png  # Multi-size icons
-└── renderer/
-    ├── index.html       # Main window HTML
-    ├── app.js           # Terminal init, theme toggle, IPC listeners
-    └── styles.css       # Light/dark theme CSS variables
+│   └── icon.png     # App icon
+└── package.json     # Dependencies & build config
 ```
 
-## 🎨 Themes
+## Keyboard Shortcuts
 
-| Theme | Background | Foreground |
-|-------|-----------|-----------|
-| Light | #FFFFFF | #000000 |
-| Dark  | #1E1E1E | #FFFFFF |
+| Shortcut | Action |
+|----------|--------|
+| Ctrl+C | Copy selection (or send SIGINT if no selection) |
+| Ctrl+V | Paste from clipboard |
+| Ctrl+Shift+C | Force copy |
+| Ctrl+Shift+V | Force paste |
+| Ctrl+Z | Undo (pass to shell) |
+| Ctrl+A | Select all |
 
-Toggle via the ☾/☀ button in the title bar. Preference saved to localStorage.
-
-## 📄 License
-
-THANKS FOR YOUR DONATION:
-<img width="828" height="1124" alt="d22bbe510256a2342d93d815077c16c3" src="https://github.com/user-attachments/assets/f5dd2e46-7c0e-485e-bec7-c7f84dbb88d5" />
+## License
 
 MIT
