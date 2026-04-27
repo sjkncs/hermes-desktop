@@ -15,12 +15,21 @@
       <span id="app-version"></span>
     </div>
     <div id="titlebar-right">
+      <button id="history-btn" class="btn-icon" title="Session History">&#128196;</button>
       <button id="settings-btn" class="btn-icon" title="API Settings">&#9881;</button>
       <span id="update-badge" class="update-badge hidden" title="Update available">&#x2191;</span>
       <button id="theme-btn" class="btn-icon" title="Toggle theme">&#9788;</button>
       <span id="status-indicator" class="status-offline"></span>
       <span id="status-text">Offline</span>
     </div>
+  </div>
+
+  <div id="sidebar" class="sidebar hidden">
+    <div class="sidebar-header">
+      <h3>History</h3>
+      <button id="sidebar-close" class="btn-icon" title="Close sidebar">&times;</button>
+    </div>
+    <div id="sidebar-list" class="sidebar-list"></div>
   </div>
 
   <div id="terminal-container"></div>
