@@ -134,6 +134,14 @@ const valMaxTurns = document.getElementById('val-max-turns');
 const valGwTimeout = document.getElementById('val-gw-timeout');
 const valApiRetries = document.getElementById('val-api-retries');
 const valTermTimeout = document.getElementById('val-term-timeout');
+const historyBtn = document.getElementById('history-btn');
+const sidebar = document.getElementById('sidebar');
+const sidebarClose = document.getElementById('sidebar-close');
+const sidebarList = document.getElementById('sidebar-list');
+
+// Current session tracking
+let currentSessionId = null;
+let sessionOutputBuffer = [];
 
 // Slider value display
 cfgMaxTurns.addEventListener('input', () => valMaxTurns.textContent = cfgMaxTurns.value);
@@ -155,6 +163,10 @@ function setStatus(state, text) {
 async function startHermes() {
   if (isRunning) return;
   setStatus('starting', 'Starting...');
+
+  // Create new session ID
+  currentSessionId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  sessionOutputBuffer = [];
 
   try {
     const result = await ipcRenderer.invoke('hermes:start', []);
@@ -370,6 +382,85 @@ settingsSave.addEventListener('click', async () => {
   }
 });
 
+// --- Sidebar / Session History ---
+function toggleSidebar() {
+  const isOpen = sidebar.classList.contains('visible');
+  if (isOpen) {
+    sidebar.classList.remove('visible');
+    document.body.classList.remove('sidebar-open');
+  } else {
+    sidebar.classList.add('visible');
+    document.body.classList.add('sidebar-open');
+    loadSessionList();
+  }
+  if (fitAddon) setTimeout(() => fitAddon.fit(), 50);
+}
+
+historyBtn.addEventListener('click', toggleSidebar);
+sidebarClose.addEventListener('click', toggleSidebar);
+
+async function loadSessionList() {
+  try {
+    const sessions = await ipcRenderer.invoke('hermes:listSessions');
+    sidebarList.innerHTML = '';
+    if (!sessions.length) {
+      sidebarList.innerHTML = '<div style="padding:12px;color:var(--text-secondary);font-size:12px;">No sessions yet</div>';
+      return;
+    }
+    sessions.forEach(s => {
+      const item = document.createElement('div');
+      item.className = 'sidebar-item';
+      const dateStr = new Date(s.date).toLocaleString();
+      item.innerHTML = `
+        <button class="btn-delete" title="Delete">&times;</button>
+        <div class="sidebar-item-name">${s.name || s.id.slice(0,8)}</div>
+        <div class="sidebar-item-meta">${dateStr}${s.model ? ' · ' + s.model : ''}</div>
+        <div class="sidebar-item-preview">${s.preview || ''}</div>
+      `;
+      item.querySelector('.btn-delete').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await ipcRenderer.invoke('hermes:deleteSession', s.id);
+        loadSessionList();
+      });
+      item.addEventListener('click', () => resumeSession(s.id));
+      sidebarList.appendChild(item);
+    });
+  } catch {}
+}
+
+async function saveCurrentSession() {
+  if (!currentSessionId) return;
+  const preview = sessionOutputBuffer.slice(-5).join('').replace(/\x1b\[[0-9;]*m/g, '').trim().slice(0, 100);
+  const session = {
+    id: currentSessionId,
+    name: currentSessionId.slice(0, 8) + ' ' + new Date().toLocaleDateString(),
+    date: new Date().toISOString(),
+    preview,
+    output: sessionOutputBuffer.join(''),
+    model: cfgModel ? cfgModel.value : '',
+  };
+  try {
+    await ipcRenderer.invoke('hermes:saveSession', session);
+  } catch {}
+}
+
+async function resumeSession(id) {
+  try {
+    const session = await ipcRenderer.invoke('hermes:loadSession', id);
+    if (!session || !session.output) return;
+    // Stop current process
+    if (isRunning) {
+      await ipcRenderer.invoke('hermes:stop');
+      isRunning = false;
+    }
+    terminal.clear();
+    terminal.write(session.output);
+    currentSessionId = id;
+    sessionOutputBuffer = [session.output];
+    setStatus('offline', 'Viewing: ' + (session.name || id.slice(0,8)));
+  } catch {}
+}
+
 // --- Theme Toggle ---
 themeBtn.addEventListener('click', () => {
   currentTheme = currentTheme === 'light' ? 'dark' : 'light';
@@ -398,10 +489,20 @@ ipcRenderer.on('hermes:stdout', (_event, data) => {
       terminal.scrollToBottom();
     }
   }
+  // Buffer output for session history
+  if (currentSessionId) {
+    sessionOutputBuffer.push(data);
+    // Auto-save every ~50 chunks to avoid data loss
+    if (sessionOutputBuffer.length % 50 === 0) {
+      saveCurrentSession();
+    }
+  }
 });
 
 ipcRenderer.on('hermes:exit', (_event, code) => {
   isRunning = false;
+  // Save session on exit
+  saveCurrentSession();
   // Don't override status during update/rollback/switch operations
   if (suppressExit) return;
   if (terminal) terminal.writeln('\r\nProcess exited with code ' + code);
