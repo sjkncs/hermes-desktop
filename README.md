@@ -77,4 +77,7 @@ Toggle via the ☾/☀ button in the title bar. Preference saved to localStorage
 
 ## 📄 License
 
+THANKS FOR YOUR DONATION:
+<img width="828" height="1124" alt="d22bbe510256a2342d93d815077c16c3" src="https://github.com/user-attachments/assets/f5dd2e46-7c0e-485e-bec7-c7f84dbb88d5" />
+
 MIT
